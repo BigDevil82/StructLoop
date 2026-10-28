@@ -1,0 +1,16 @@
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.png binary
+*.dxf binary
+*.dwg binary
+*.pt binary
+*.pth binary
+.gitattributes text eol=lf
+.gitignore text eol=lf
+# Migrated source bytes are audited by migration_manifest.json; preserve their line endings.
+src/struct_agent/_vendor/** -text

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "case_id": "residential_001",
+  "dxf": "data/local/residential_001/architecture_preprocessed.dxf",
+  "sha256": "4c9f637390669573e259cdb459c787ab573de0989dd275a48c4fa193f15dcc31",
+  "source": "E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf/data/dxf/cad_json_data/archi_comp.dxf",
+  "category": 2,
+  "category_evidence": "Png2Dxf/README.md:79-84 uses archi_comp.dxf with --category 2; model label L1L28",
+  "native_coordinate_unit": "mm",
+  "dxf_header_insunits": 6,
+  "unit_note": "Header says metres (INSUNITS=6), but room edges are e.g. 3600 x 3200 and upstream preprocessing consumes millimetres. Preserve original bytes; interpret numerical coordinates as mm. Room envelope: 27100 x 12500 mm.",
+  "symmetry_mode": "none",
+  "design_conditions_status": "PENDING_ENGINEER_CONFIRMATION"
+}

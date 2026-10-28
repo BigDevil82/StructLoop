@@ -1,0 +1,7 @@
+units:
+  length: m
+  force: kN
+  stress: MPa
+seed: 42
+outputs: outputs
+solver: mvlem_frame

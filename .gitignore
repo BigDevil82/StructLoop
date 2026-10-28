@@ -1,0 +1,41 @@
+# Python environments, caches and build products
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.coverage*
+htmlcov/
+
+# Private engineering inputs, model weights and generated runs
+/checkpoints/
+/data/local/
+/data/raw/
+/data/interim/
+/data/processed/
+/outputs/
+*.dwg
+*.dxf
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.log
+
+# Local credentials and editor/OS state (keep template configuration)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp

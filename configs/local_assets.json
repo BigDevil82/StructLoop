@@ -1,0 +1,47 @@
+{
+  "rc_fold_0": {
+    "path": "checkpoints\\rcgnn\\fold_0.pth",
+    "sha256": "bc0104856e3b14ed6426b34801e2fd30410c284121311fa5407a1e47ee159d0a",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\outputs\\result\\shearwall_pred\\0126_cond_kfold\\fold_0\\best_model.pth"
+  },
+  "rc_fold_1": {
+    "path": "checkpoints\\rcgnn\\fold_1.pth",
+    "sha256": "6b1323ca67622dee50d28571171da1edfa16a1e065ce56787eb89cfca238c199",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\outputs\\result\\shearwall_pred\\0126_cond_kfold\\fold_1\\best_model.pth"
+  },
+  "rc_fold_2": {
+    "path": "checkpoints\\rcgnn\\fold_2.pth",
+    "sha256": "dd5d8a966e5da8497dc5ba9f3c0cd787ef27d81d33e7ac5b716aebbbd424c41c",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\outputs\\result\\shearwall_pred\\0126_cond_kfold\\fold_2\\best_model.pth"
+  },
+  "rc_fold_3": {
+    "path": "checkpoints\\rcgnn\\fold_3.pth",
+    "sha256": "e05833011be2f768011d52a2e85968a4f3fcbaf8616c3ca499ff671f6e398fd7",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\outputs\\result\\shearwall_pred\\0126_cond_kfold\\fold_3\\best_model.pth"
+  },
+  "rc_fold_4": {
+    "path": "checkpoints\\rcgnn\\fold_4.pth",
+    "sha256": "d022ad0bed7c9f11af1bd21bc6cbe48ce4250316b8e471e755dd26739ccb1d40",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\outputs\\result\\shearwall_pred\\0126_cond_kfold\\fold_4\\best_model.pth"
+  },
+  "feasibility": {
+    "path": "checkpoints\\casino\\feasibility.pt",
+    "sha256": "e072c72e53a83ea692ceed8a263165d35d73abd39db6b61a201edbaaa6f7ad04",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\data\\parametric\\ckpt\\baseline_gnn_room_hybrid_h256_screen995_v1\\gnn_final_pass.pt"
+  },
+  "steel": {
+    "path": "checkpoints\\casino\\steel.pt",
+    "sha256": "f60b0090a396f06aa0e30659bf4e7603aeabb5733e60089aba63f81fc2e04738",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\data\\parametric\\ckpt\\steel_gnn_room_lr5e4_b512\\gnn_steel.pt"
+  },
+  "reference_dxf": {
+    "path": "data\\local\\L17_101.dxf",
+    "sha256": "52c120c6d2a3a3c438d47fb10991fce0b415039add767ab9eada927e6ac5eec1",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\data\\dxf\\fem_raw\\L17_101.dxf"
+  },
+  "reference_native_layout": {
+    "path": "data\\local\\L17_101_native.json",
+    "sha256": "839d4c8c4e489f4c0c263ef1563f89f0588d852e1fe20f9b9b9a8db668c15cd7",
+    "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\data\\dxf\\cad_json_data\\fem_raw\\L17_101.json"
+  }
+}

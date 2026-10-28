@@ -1,0 +1,344 @@
+{
+  "case_id": "toy_01",
+  "fidelity": "mock",
+  "scenario": "directional_capacity_v1",
+  "spec": {
+    "schema_version": 1,
+    "condition_id": "synthetic_only",
+    "stories": 28,
+    "story_height_m": 2.9,
+    "slab_thickness_m": 0.12,
+    "intensity": 8.0,
+    "site_class": "II",
+    "seismic_group": 1,
+    "objective": "upstream_material_cost_cny",
+    "code_basis": "MOCK ONLY: no engineering code check",
+    "design_variables": [
+      {
+        "name": "tw_bot",
+        "unit": "m",
+        "values": [
+          0.2,
+          0.3
+        ]
+      },
+      {
+        "name": "tw_mid",
+        "unit": "m",
+        "values": [
+          0.16
+        ]
+      },
+      {
+        "name": "tw_top",
+        "unit": "m",
+        "values": [
+          0.16
+        ]
+      },
+      {
+        "name": "hb_main",
+        "unit": "m",
+        "values": [
+          0.5
+        ]
+      },
+      {
+        "name": "bb_main",
+        "unit": "m",
+        "values": [
+          0.2
+        ]
+      },
+      {
+        "name": "hb_sec",
+        "unit": "m",
+        "values": [
+          0.3
+        ]
+      },
+      {
+        "name": "bb_sec",
+        "unit": "m",
+        "values": [
+          0.2
+        ]
+      },
+      {
+        "name": "conc_bot",
+        "unit": "grade",
+        "values": [
+          "C30"
+        ]
+      }
+    ]
+  },
+  "layouts": [
+    {
+      "schema_version": 1,
+      "layout_id": "layout_a",
+      "source": "synthetic_state_machine_fixture",
+      "length_unit": "m",
+      "coordinate_system": "global_xy",
+      "members": [
+        {
+          "member_id": "wx",
+          "start": [
+            0.0,
+            0.0
+          ],
+          "end": [
+            8.0,
+            0.0
+          ],
+          "role": "wall"
+        }
+      ],
+      "slabs": [
+        [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            4.0,
+            0.0
+          ],
+          [
+            4.0,
+            4.0
+          ],
+          [
+            0.0,
+            4.0
+          ]
+        ],
+        [
+          [
+            4.0,
+            0.0
+          ],
+          [
+            8.0,
+            0.0
+          ],
+          [
+            8.0,
+            4.0
+          ],
+          [
+            4.0,
+            4.0
+          ]
+        ],
+        [
+          [
+            0.0,
+            4.0
+          ],
+          [
+            4.0,
+            4.0
+          ],
+          [
+            4.0,
+            8.0
+          ],
+          [
+            0.0,
+            8.0
+          ]
+        ],
+        [
+          [
+            4.0,
+            4.0
+          ],
+          [
+            8.0,
+            4.0
+          ],
+          [
+            8.0,
+            8.0
+          ],
+          [
+            4.0,
+            8.0
+          ]
+        ]
+      ]
+    },
+    {
+      "schema_version": 1,
+      "layout_id": "layout_b",
+      "source": "synthetic_state_machine_fixture",
+      "length_unit": "m",
+      "coordinate_system": "global_xy",
+      "members": [
+        {
+          "member_id": "wx",
+          "start": [
+            0.0,
+            0.0
+          ],
+          "end": [
+            8.0,
+            0.0
+          ],
+          "role": "wall"
+        },
+        {
+          "member_id": "wy",
+          "start": [
+            0.0,
+            0.0
+          ],
+          "end": [
+            0.0,
+            8.0
+          ],
+          "role": "wall"
+        }
+      ],
+      "slabs": [
+        [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            4.0,
+            0.0
+          ],
+          [
+            4.0,
+            4.0
+          ],
+          [
+            0.0,
+            4.0
+          ]
+        ],
+        [
+          [
+            4.0,
+            0.0
+          ],
+          [
+            8.0,
+            0.0
+          ],
+          [
+            8.0,
+            4.0
+          ],
+          [
+            4.0,
+            4.0
+          ]
+        ],
+        [
+          [
+            0.0,
+            4.0
+          ],
+          [
+            4.0,
+            4.0
+          ],
+          [
+            4.0,
+            8.0
+          ],
+          [
+            0.0,
+            8.0
+          ]
+        ],
+        [
+          [
+            4.0,
+            4.0
+          ],
+          [
+            8.0,
+            4.0
+          ],
+          [
+            8.0,
+            8.0
+          ],
+          [
+            4.0,
+            8.0
+          ]
+        ]
+      ]
+    }
+  ],
+  "designs": [
+    {
+      "design_id": "layout_a_0",
+      "layout_id": "layout_a",
+      "condition_id": "synthetic_only",
+      "values": {
+        "tw_bot": 0.2,
+        "tw_mid": 0.16,
+        "tw_top": 0.16,
+        "hb_main": 0.5,
+        "bb_main": 0.2,
+        "hb_sec": 0.3,
+        "bb_sec": 0.2,
+        "conc_bot": "C30"
+      }
+    },
+    {
+      "design_id": "layout_a_1",
+      "layout_id": "layout_a",
+      "condition_id": "synthetic_only",
+      "values": {
+        "tw_bot": 0.3,
+        "tw_mid": 0.16,
+        "tw_top": 0.16,
+        "hb_main": 0.5,
+        "bb_main": 0.2,
+        "hb_sec": 0.3,
+        "bb_sec": 0.2,
+        "conc_bot": "C30"
+      }
+    },
+    {
+      "design_id": "layout_b_0",
+      "layout_id": "layout_b",
+      "condition_id": "synthetic_only",
+      "values": {
+        "tw_bot": 0.2,
+        "tw_mid": 0.16,
+        "tw_top": 0.16,
+        "hb_main": 0.5,
+        "bb_main": 0.2,
+        "hb_sec": 0.3,
+        "bb_sec": 0.2,
+        "conc_bot": "C30"
+      }
+    },
+    {
+      "design_id": "layout_b_1",
+      "layout_id": "layout_b",
+      "condition_id": "synthetic_only",
+      "values": {
+        "tw_bot": 0.3,
+        "tw_mid": 0.16,
+        "tw_top": 0.16,
+        "hb_main": 0.5,
+        "bb_main": 0.2,
+        "hb_sec": 0.3,
+        "bb_sec": 0.2,
+        "conc_bot": "C30"
+      }
+    }
+  ],
+  "initial_layout_id": "layout_a",
+  "failure_design_ids": []
+}
