@@ -21,19 +21,52 @@ from struct_agent._vendor.shearwall_modeling.parametric.types import ParametricA
 pytestmark = pytest.mark.real
 
 
+def test_feedback_environment_with_real_sessions(case_inputs: tuple, tmp_path: Path) -> None:
+    """Actual FuseGNN/CASINO, synthetic FEA: decision continuation and gated switch."""
+    import hashlib
+    from struct_agent.agents.policies import RulePolicy
+    from struct_agent.workflows.optimization_env import OptimizationEnvironment
+    layout, rooms, spec, cfg = case_inputs
+    cfg = cfg.model_copy(update={"generations": 1})
+    root = tmp_path / "feedback"
+    service = make_service(root, cfg)
+    service.solver.force_infeasible = True
+    alternate = layout.model_copy(update={"layout_id": "test_candidate_b"})
+    def factory(candidate: LayoutCandidate, directory: Path) -> CasinoSession:
+        return CasinoSession(candidate, rooms, spec, service, cfg, directory=directory)
+    env = OptimizationEnvironment("synthetic_feedback", (layout, alternate), service, factory, root)
+    policy = RulePolicy()
+    env.step(policy.choose(env.observe()))
+    state = env.observe()
+    assert state.completed_generations == 1 and state.fidelity == "mock"
+    assert state.fea_calls_used > 0 and state.evidence_refs
+    assert all((root / p).is_file() for p in state.evidence_refs)
+    assert "SWITCH_LAYOUT" in state.allowed_actions
+    before = len(service.records)
+    first = env.sessions[layout.layout_id]
+    env.step(policy.choose(state))
+    assert env.status == "WAITING_APPROVAL" and len(service.records) == before
+    env.approve_layout(alternate.layout_id, reviewer="synthetic test approval",
+        expected_sha256=hashlib.sha256(alternate.model_dump_json().encode()).hexdigest())
+    env.step(policy.choose(env.observe()))
+    assert env.sessions[alternate.layout_id].optimizer.evaluator.local_calibrator is not first.optimizer.evaluator.local_calibrator
+    assert len(service.records) > before
+
+
 class SyntheticNativeResponseSolver:
     """Fabricated responses with native field names; confined to tests."""
     fidelity = "mock"
 
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, force_infeasible: bool = False) -> None:
         self.fail = fail
+        self.force_infeasible = force_infeasible
 
     def evaluate(self, layout: LayoutCandidate, design: DesignCandidate, spec: ProjectSpec,
                  *, evaluation_id: str) -> AnalysisRecord:
         if self.fail:
             raise RuntimeError("Injected mock solver failure")
         thickness = float(design.values["tw_bot"])
-        passed = thickness >= 0.3
+        passed = thickness >= 0.3 and not self.force_infeasible
         steel = 1000. * sum(float(v) for k, v in design.values.items() if k != "conc_bot")
         raw = ParametricAnalysisResult(converged=True, feasible=passed, design_passed=passed,
             design_failed_beam_count=0, design_failed_wall_count=0 if passed else 1,
@@ -147,3 +180,63 @@ def test_layout_sessions_keep_calibration_separate(case_inputs: tuple, tmp_path:
     assert second.optimizer.evaluator.local_calibrator is not first.optimizer.evaluator.local_calibrator
     with pytest.raises(FileExistsError):
         CasinoSession(layout, rooms, spec, service, cfg, directory=tmp_path / "run/first")
+
+
+def test_matched_three_policy_comparison(case_inputs: tuple, tmp_path: Path) -> None:
+    """Equal-budget policies, real surrogate sessions, synthetic FEA and stub LLM."""
+    import hashlib
+    import time
+    from pydantic import SecretStr
+    from struct_agent.agents.chat_client import ChatClient, ChatConfig
+    from struct_agent.agents.policies import FixedPolicy, RulePolicy, LLMPolicy
+    from struct_agent.evaluation.compare import comparison
+    from struct_agent.schemas.agent import OptimizationState
+    from struct_agent.workflows.optimization_env import OptimizationEnvironment
+    layout, rooms, spec, cfg = case_inputs
+    cfg = cfg.model_copy(update={"generations": 1, "population_size": 3})
+    alternate = layout.model_copy(update={"layout_id": "synthetic_candidate_b"})
+    pool = (layout, alternate)
+    inputs = {"spec": Path("configs/reference_spec.json"), "feasibility": cfg.feasibility_weights,
+              "steel": cfg.steel_weights, "rooms": Path("outputs/residential_001_rcgnn_01/room_graph.json")}
+    for i, candidate in enumerate(pool):
+        path = tmp_path / f"candidate_{i}.json"
+        write_json(path, candidate.model_dump())
+        inputs[f"layout_{i}"] = path
+    runs = []
+    for policy_name in ("fixed", "rules", "llm_stub"):
+        root = tmp_path / policy_name
+        create_run(root, seed=cfg.seed, inputs=inputs, config={"policy": policy_name, "budget": 8,
+            "purpose": "smoke_only", "fidelity": "mock", "casino": cfg.model_dump(mode="json"),
+            "case_id": "synthetic_policy_comparison", "max_steps": 10})
+        service = AnalysisService(SyntheticNativeResponseSolver(force_infeasible=True), budget=8, directory=root / "analyses")
+        def factory(candidate: LayoutCandidate, directory: Path) -> CasinoSession:
+            return CasinoSession(candidate, rooms, spec, service, cfg, directory=directory)
+        env = OptimizationEnvironment("synthetic_policy_comparison", pool, service, factory, root)
+        client = None
+        if policy_name == "llm_stub":
+            def transport(url: str, headers: dict, payload: dict, timeout: float) -> dict:
+                state = OptimizationState.model_validate_json(payload["messages"][1]["content"])
+                return {"choices": [{"message": {"content": RulePolicy().choose(state).model_dump_json()}}],
+                        "usage": {"total_tokens": 0}, "model": "TEST_STUB_NOT_LIVE"}
+            client = ChatClient(ChatConfig(model="TEST_STUB_NOT_LIVE"), SecretStr("test-only-key"), root / "api", transport=transport)
+            policy = LLMPolicy(client, root / "decisions")
+        else:
+            policy = FixedPolicy() if policy_name == "fixed" else RulePolicy()
+        start = time.monotonic()
+        for _ in range(10):
+            if env.status != "RUNNING":
+                break
+            env.step(policy.choose(env.observe()))
+            if env.status == "WAITING_APPROVAL":
+                env.approve_layout(alternate.layout_id, reviewer="synthetic test approval",
+                    expected_sha256=hashlib.sha256(alternate.model_dump_json().encode()).hexdigest())
+        assert env.status == "COMPLETED"
+        write_json(root / "summary.json", {**env.summary(), "elapsed_s": time.monotonic()-start,
+            "api_calls": client.calls if client else 0, "api_total_tokens": client.total_tokens if client else 0})
+        runs.append(root)
+    report = comparison(tuple(runs))
+    write_json(tmp_path / "comparison.json", report)
+    rows = report["runs"]
+    assert [r["fidelity"] for r in rows] == ["mock"] * 3
+    assert [r["approved_switches"] for r in rows] == [0, 1, 1]
+    assert all(r["fea_attempts"] <= 8 and r["best_feasible_cost"] is None for r in rows)

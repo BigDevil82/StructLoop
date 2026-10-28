@@ -281,3 +281,96 @@ Phase 4 再接入 LLM API，用固定/规则策略作对照；Phase 5 完善人�
 
 当前增量会话只支持同进程代际暂停，不支持磁盘恢复、代内暂停或终止后追加世代；
 CLI 逐段自动执行，尚无 Agent 在段间决策。正式工程条件仍待确认，本次不宣称获得工程可行方案。
+
+## 2026-10-28：Phase 4 基础决策闭环、学校 API 与获批跨布局冒烟
+
+### 实现范围
+
+- 新增 `schemas/agent.py`、`agents/chat_client.py`、`agents/policies.py`：固定、规则、受控 LLM 与状态哈希回放。
+  学校 HTTPS 网关默认直连，读取 `.env` 的 `apikey`，严格检查动作/候选/证据，失败转人工检查。
+  保留 API 请求、最终回答、usage、重试和脱敏错误；无 shell 工具、无模型审批权限。
+- 新增 `workflows/optimization_env.py`、`layout_approval.py` 和 `agent_cli.py`：同布局续行、共享真实预算、
+  跨布局会话/校准隔离、动作前后实际消耗、布局/条件/用途哈希绑定批准。创建会话失败也记录完整错误。
+- 新增 `evaluation/compare.py`：相同条件/预算/代码/软件才允许汇总，失败保留，无可行成本为 null。
+- 最小迁移 `adapters/symmetry.py` 并给 `rcgnn.layout_from_prediction` 增加可选镜像轴；默认行为不变。
+  新增 `scripts/prepare_symmetry_candidate.py`，复用已有房间图和预测，不重训或重跑模型。
+  对照图用标准库 SVG；没有新增 Matplotlib/Pillow 等依赖，未改 `_vendor`。
+- 更新 README、`docs/phase4_agent.md`、上游契约、`.env.example`、网关配置与临时 Office 文件忽略规则。
+
+### 授权及网络验证
+
+用户明确授权“沿用现有条件，仅作冒烟验证”：28 层、8 度、II 类场地、第 1 组及现有荷载/材料口径。
+校园网经系统代理返回 403；用户授权尝试绕过 Clash，直连后模型列表与对话均成功。
+采用实测存在的 `DeepSeek-V4.1-Flash`，首次合成状态探针保留在 `outputs/phase4_api_probe_01/`。
+首次回答误解暂停/待审查状态，提示词明确其语义后继续实际验证，未修改原始失败/探针记录。
+
+用户查看对照后明确回复“批准，用于本轮跨布局冒烟”。批准保存在
+`outputs/residential_001_symmetry_02/user_approval.json`，绑定布局规范 JSON SHA256
+`e16a6dc51c5370a9e19a9913c99f20e9af068723b7c5011951dcd8a1fdfa38b4`
+及条件 SHA256 `579ff7b4cc395dc4d957b3908cd2e33b9d066a63f33151d9eb0e760dfc23e685`。
+它不是工程签审，也不适用于变更后的几何/条件/用途。
+
+### 真实运行结果
+
+| 工件目录（outputs 下） | 实际动作 | 真实 FEA | 求解失败 | 可行解 |
+|---|---|---:|---:|---:|
+| phase4_real_rules_01 | 继续→继续→结束 | 5 | 0 | 0 |
+| phase4_real_llm_01 | 继续→继续→人工检查 | 5 | 0 | 0 |
+| phase4_real_switch_01 | 继续→切换提议→用户批准→继续→结束 | 4（2+2） | 0 | 0 |
+
+共 14 次真实求解成功，但所有候选均未通过既有结构校核，不得解释为工程可行。
+LLM 在第 4 次 FEA 后依据墙抗剪违反与剩余预算选择继续，随后确实执行第 5 次 FEA；
+共 3 次在线决策，API 返回 2303 tokens，无 JSON 修正或网络重试。预算用尽后请求人工检查。
+规则/LLM 同布局冒烟得到相同评价轨迹，但开发期间代码哈希不同，比较器正确拒绝将其当正式配对实验。
+
+跨布局运行当前布局和新布局各 2 次实际分析，批准事件不消耗 FEA；两个会话各保留 2 条局部样本。
+同布局运行各有 5 条样本，均未达到正式默认最小校准样本数 25，不能声称真实局部模型已拟合。
+`outputs/phase4_verification_01/verification.json` 核验评价计数、事件增量、证据文件和批准记录。
+
+上述真实命令均使用：
+
+```powershell
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_01/layout.json --rooms outputs/residential_001_rcgnn_01/room_graph.json --spec configs/reference_spec.json --run outputs/phase4_real_llm_01 --case-id residential_001 --purpose smoke_only --policy llm --seed 42 --budget-fea 5 --population 3 --generations 2 --screening-threshold 0
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_01/layout.json --layout outputs/residential_001_symmetry_02/layout.json --layout-approval outputs/residential_001_symmetry_02/user_approval.json --rooms outputs/residential_001_rcgnn_01/room_graph.json --spec configs/reference_spec.json --run outputs/phase4_real_switch_01 --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 4 --population 2 --generations 1 --screening-threshold 0
+```
+
+规则单布局命令与第一条相同，但 `--policy rules --run outputs/phase4_real_rules_01`。
+这些目录已存在，复跑必须改用新目录名；阈值 0 只作调用链冒烟，不表示正式 CASINO 效率设置。
+
+### 测试与几何核验
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_optimization_env.py
+# 7 passed in 2.63s（含构造异常与批准绑定）
+.venv/Scripts/python.exe -m pytest -q tests/integration/test_casino_session.py tests/integration/test_symmetry_reference.py --run-real
+# 7 passed, 1 warning in 15.74s
+.venv/Scripts/python.exe -m pytest -q
+# 57 passed, 14 skipped, 1 warning in 8.63s
+```
+
+14 skipped = 原 11 项 + 真实会话反馈集成、三策略配对集成、上游对称化参考各 1 项。
+本次上述 7 项显式集成已通过；除几何参考外使用真实 FuseGNN 权重但**合成 FEA**，LLM 比较使用桩。
+新增三策略测试共享候选/预算，固定策略不切换、规则与 LLM 桩均切换一次；全部标记 mock。
+完整 104 个工件复制并逐文件校验哈希后保存于 `outputs/phase4_policy_comparison_mock_01/`。
+原 7 项更早的真实回归未重复执行；唯一 warning 为既有 PyG 弃用提示。
+
+候选生成命令：
+
+```powershell
+.venv/Scripts/python.exe scripts/prepare_symmetry_candidate.py --source-run outputs/residential_001_rcgnn_01 --run outputs/residential_001_symmetry_02 --seed 42
+```
+
+原始房间并集对称 IoU=0.9855676302564323，阈值 0.85；镜像轴为原坐标 x=728266 mm。
+输出墙线与上游逐项 WKB 完全一致，最终拓扑校验通过，仍为 43 个楼板区域。
+墙段 142→135（涉及合并，不等于墙量减少）。`comparison.svg` 与对应 PNG 已检查，用户已批准候选。
+首次 `residential_001_symmetry_01` 几何生成成功，但绘图因缺 Matplotlib 失败；保留该目录，
+随后改用无额外依赖的 SVG 并在新目录重新生成。PNG 是 Windows System.Drawing 对 SVG 的展示副本。
+密钥扫描未发现源码、DOCX 内容及当前 JSON 工件泄漏，`.env` 确认被 Git 忽略。
+
+### 完成边界与下一最小任务
+
+Phase 4 的基础工程验收路径已打通：实际反馈后继续优化、获批后切换布局、学校 LLM 真调用。
+这不等于本章研究完成：论文 Ours 的动作收益/分层决策机制、正式三策略配对、多种子与消融仍待设计验证。
+下一最小任务：冻结当前代码和双布局候选池，确定正式 pilot 的预算/停止条件，做同版本固定/规则/LLM 对照；
+同时诊断反复出现的墙/梁抗剪不通过，先核对上游输出及工程口径，不擅自改变约束限值。
+工程条件仍仅获准冒烟；磁盘恢复、工程审批界面、DWG/成果输出继续留在后续阶段。

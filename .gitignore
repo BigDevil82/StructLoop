@@ -39,3 +39,4 @@ htmlcov/
 Thumbs.db
 *.bak
 *.tmp
+~$*

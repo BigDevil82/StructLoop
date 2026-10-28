@@ -135,6 +135,22 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 需要已经生成的参考工件，准备步骤及命令见
 [进度记录](docs/progress.md)。普通测试默认跳过真实权重/求解器测试。
 
+## Phase 4 决策与学校 LLM
+
+已接入固定/规则/LLM 策略、CASINO 代际反馈、全局预算、布局切换审批及证据回放。
+学校 API 默认绕过系统代理直连，密钥读取本地 `.env` 的 `apikey`，不会写入运行审计。
+完整用法、真实与合成验证边界见 [Phase 4 使用说明](docs/phase4_agent.md)。
+
+```powershell
+.venv/Scripts/python.exe -m struct_agent.agent_cli --help
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_llm_policy.py tests/unit/test_optimization_env.py tests/unit/test_comparison.py
+```
+
+`outputs/phase4_real_llm_01/` 已完成“真实分析→LLM 再决策→再次真实分析”，
+5 次 FEA 均求解成功但结构不可行，预算耗尽后模型请求人工检查；仅作冒烟。
+用户已批准 `residential_001_symmetry_02` 作为本轮第二候选，批准绑定布局与设计条件哈希，
+不代表正式工程签审。后续真实跨布局结果见 [进度记录](docs/progress.md)。
+
 ## 当前边界
 
 - 原工程 `axis_engine` 是 CAD/规则布置模块；真正的 RC-GNN 位于 `Png2Dxf/src/shearwall_pred`。
@@ -143,8 +159,9 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 - 默认筛选阈值在迁移生成案例上拒绝了本轮候选；这不证明候选一定不可行。
   `--screening-threshold 0.0` 仅用于另行标记的调用链冒烟验证，不代表 CASINO 效率实验。
 - 实际求解冒烟方案均未通过结构校核。没有宣称获得工程可行解或证明论文研究假设。
-- 已有 mock 状态机、预算、模拟审批门控及 CASINO 同进程增量会话；真实 FEA 反馈决策、LLM、
-  从磁盘恢复和工程人工审批界面尚未实现。进程内的 mock 审批后可继续运行。
+- 已接入真实 FEA 反馈和学校 LLM；审批文件只能来自受信任操作方，并绑定候选/条件/用途。
+  从磁盘恢复及工程人工审批界面尚未实现；同进程会话和已获批候选可继续执行。
+- 论文 Ours 的决策收益机制、正式对比及消融尚待研究设计与实验，不以冒烟替代科学结论。
 
 ## Git 与本地数据
 

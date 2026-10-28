@@ -67,7 +67,8 @@ class RCGNNAdapter:
         return layout_from_prediction(graph, self.predict(graph), layout_id=layout_id)
 
 
-def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: str) -> LayoutCandidate:
+def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: str,
+                           symmetry_axis_mm: float | None = None) -> LayoutCandidate:
     """Retain upstream topology construction, including beam roles and slabs."""
     from shapely.geometry import Polygon
     from struct_agent._vendor.data_engine.postprocess.fem_builder import FEMTopologyBuilder
@@ -76,6 +77,10 @@ def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: s
     builder = FEMTopologyBuilder(gap_tolerance=200., min_length=100.)
     for poly, mask, row in zip(graph.room_polygons, graph.masks, ratios):
         builder.add_room(Polygon([(x*1000.,y*1000.) for x,y in poly]), row, mask)
+    if symmetry_axis_mm is not None:
+        from .symmetry import union_walls
+        builder.raw_walls = union_walls(builder.raw_walls, builder.room_edges,
+                                       axis_mm=symmetry_axis_mm, min_length_mm=builder.min_length)
     result = builder.build()
     if not result["validation"]["ok"]:
         raise ValueError(f"Invalid generated topology: {result['validation']}")
@@ -87,4 +92,5 @@ def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: s
         else:
             item["beam_role"] = m.get("beam_role", "primary")
             raw["beams"].append(item)
-    return layout_from_legacy(raw, unit="mm", layout_id=layout_id, source="rcgnn")
+    return layout_from_legacy(raw, unit="mm", layout_id=layout_id,
+                              source="rcgnn" if symmetry_axis_mm is None else "rcgnn_symmetry_union")
