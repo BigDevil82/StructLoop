@@ -10,7 +10,8 @@ from struct_agent.schemas.diagnostics import MemberDiagnostic
 
 
 def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, analysis: AnalysisResult,
-                    design: ReinforcementDesignSummary, *, beta_c: float) -> tuple[MemberDiagnostic, ...]:
+                    design: ReinforcementDesignSummary, *, beta_c: float,
+                    combination_types: dict[str, str]) -> tuple[MemberDiagnostic, ...]:
     profiles = {p.story: p for p in context.story_profiles}
     rows = []
     groups = (("wall", analysis.wall_uls_metrics, context.wall_story_element_units,
@@ -33,25 +34,18 @@ def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, anal
             depth = unit.member.length if kind == "wall" else unit.depth
             denominator = max(beta_c * fc * max(width, 1e-9) * max(depth, 1e-9), 1e-9)
             combo_shear = {name: float(values[native_id, story][2]) for name, values in forces.items()}
-            combo_available = metric.shear_control_combo in combo_shear
-            if combo_available:
-                shear = max(0., combo_shear[metric.shear_control_combo])
-            elif metric.shear_control_combo == "" and metric.shear_pressure_ratio == 0.:
-                # Native envelope initializes at -1 N, clips its maximum to zero,
-                # and can leave combo='' when every signed shear is below -1 N.
-                if not combo_shear or any(v > -1. for v in combo_shear.values()):
-                    raise ValueError("Empty native control combination is inconsistent with signed forces")
-                shear = 0.
-            else:
-                raise ValueError("Native shear control combination is missing from force data")
+            combo_limits = {name: .15 if combination_types[name] == 'Seismic' else .2 for name in combo_shear}
+            shear = abs(combo_shear[metric.shear_control_combo])
             result = design_by_key.get((native_id, story))
+            if result is None:
+                raise ValueError(f"Modeled member {native_id} story {story} has no reinforcement check")
             rows.append(MemberDiagnostic(native_id=native_id, member_id=member.member_id, role=member.role,
                 story=story, start_m=(unit.member.start.x, unit.member.start.y),
                 end_m=(unit.member.end.x, unit.member.end.y), length_m=metric.length,
                 width_m=width, depth_m=depth, concrete_grade=grade, fc_pa=fc, beta_c=beta_c,
                 shear_n=shear, denominator_n=denominator, shear_ratio=metric.shear_pressure_ratio,
                 shear_limit=metric.shear_pressure_ratio_limit, control_combo=metric.shear_control_combo,
-                control_combo_available=combo_available, combo_shear_n=combo_shear,
+                combo_shear_n=combo_shear, combo_shear_limits=combo_limits,
                 control_combo_type=metric.shear_control_combo_type, shear_passed=metric.is_shear_pressure_passed,
                 reinforcement_checked=result is not None, reinforcement_passed=result.is_passed if result else None,
                 reinforcement_messages=tuple(result.messages) if result else ()))

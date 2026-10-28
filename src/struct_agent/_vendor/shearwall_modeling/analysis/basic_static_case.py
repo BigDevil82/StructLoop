@@ -89,35 +89,32 @@ class LinearSuperpositionAnalyzer:
         story_forces_n = self._wind_story_forces_by_code(direction='Y')
         self._apply_lateral_load(story_forces_n, direction='Y')
 
-    def _extract_case_forces(self, wall_dir: str | None) -> tuple[dict[tuple[int, int], tuple[float, float, float]], dict[tuple[int, int], tuple[float, float, float]]]:
+    def _extract_case_forces(self) -> tuple[dict[tuple[int, int], tuple[float, float, float]], dict[tuple[int, int], tuple[float, float, float]]]:
         beam_forces = {(unit.beam_id, unit.story): extract_beam_force_tuple(unit.element_tag) for unit in self.context.beam_element_units}
-        wall_forces = {(unit.wall_id, unit.story): extract_wall_force_tuple(unit, dir_name=wall_dir) for unit in self.context.wall_story_element_units}
+        wall_forces = {(unit.wall_id, unit.story): extract_wall_force_tuple(unit) for unit in self.context.wall_story_element_units}
         return (beam_forces, wall_forces)
 
     def _run_static_basic_case(self, case_name: str) -> tuple[dict[tuple[int, int], tuple[float, float, float]], dict[tuple[int, int], tuple[float, float, float]]]:
         ts_tag = 71000 + self.basic_cases.index(case_name) + 1
         pat_tag = 71000 + self.basic_cases.index(case_name) + 1
+        ops.reset()
         ops.timeSeries('Linear', ts_tag)
         ops.pattern('Plain', pat_tag, ts_tag)
         if case_name == 'Dead':
             self._apply_dead_load()
-            wall_dir = None
         elif case_name == 'Live':
             self._apply_live_load()
-            wall_dir = None
         elif case_name == 'WindX':
             self._apply_wind_x_load()
-            wall_dir = 'X'
         elif case_name == 'WindY':
             self._apply_wind_y_load()
-            wall_dir = 'Y'
         else:
             raise ValueError(f'Unsupported basic case {case_name}.')
         self._configure_static_analysis()
         if ops.analyze(1) != 0:
             raise RuntimeError(f'Static analysis failed for basic case: {case_name}')
         ops.reactions()
-        beam_forces, wall_forces = self._extract_case_forces(wall_dir=wall_dir)
+        beam_forces, wall_forces = self._extract_case_forces()
         ops.remove('loadPattern', pat_tag)
         ops.reset()
         return (beam_forces, wall_forces)
@@ -134,38 +131,3 @@ class LinearSuperpositionAnalyzer:
         basic_results['EqY'] = {'beam_forces': rsa_result.seismic_beam_forces_by_dir['Y'], 'wall_forces': rsa_result.seismic_wall_forces_by_dir['Y']}
         return basic_results
 
-    def combine_effects(self, basic_results: dict, combinations: list[dict]) -> dict:
-        """
-        在外部对基本工况效应进行矩阵组合
-        combinations 示例:
-        [
-            {'name': '1.3D+1.5L', 'factors': {'Dead': 1.3, 'Live': 1.5}},
-            {'name': '1.2D+1.4L+1.2WX', 'factors': {'Dead': 1.2, 'Live': 1.4, 'WindX': 1.2}}
-        ]
-        """
-        combined_results = {}
-        for combo in combinations:
-            combo_name = combo['name']
-            factors = combo['factors']
-            combo_beam_forces: dict[tuple[int, int], tuple[float, float, float]] = {}
-            combo_wall_forces: dict[tuple[int, int], tuple[float, float, float]] = {}
-            beam_keys = {key for value in basic_results.values() for key in value.get('beam_forces', {}).keys()}
-            wall_keys = {key for value in basic_results.values() for key in value.get('wall_forces', {}).keys()}
-            for key in beam_keys:
-                v0, v1, v2 = (0.0, 0.0, 0.0)
-                for case, factor in factors.items():
-                    f0, f1, f2 = basic_results.get(case, {}).get('beam_forces', {}).get(key, (0.0, 0.0, 0.0))
-                    v0 += abs(float(factor)) * abs(float(f0))
-                    v1 += abs(float(factor)) * abs(float(f1))
-                    v2 += abs(float(factor)) * abs(float(f2))
-                combo_beam_forces[key] = (v0, v1, v2)
-            for key in wall_keys:
-                v0, v1, v2 = (0.0, 0.0, 0.0)
-                for case, factor in factors.items():
-                    f0, f1, f2 = basic_results.get(case, {}).get('wall_forces', {}).get(key, (0.0, 0.0, 0.0))
-                    v0 += abs(float(factor)) * abs(float(f0))
-                    v1 += abs(float(factor)) * abs(float(f1))
-                    v2 += abs(float(factor)) * abs(float(f2))
-                combo_wall_forces[key] = (v0, v1, v2)
-            combined_results[combo_name] = {'beam_forces': combo_beam_forces, 'wall_forces': combo_wall_forces}
-        return combined_results

@@ -32,6 +32,7 @@ class AnalysisRecord(Contract):
     error: ErrorRecord | None
     input_hash: str | None = None
     solver_log: str | None = None
+    analysis_signature: str | None = None
 
     @model_validator(mode="after")
     def failure_semantics(self) -> AnalysisRecord:

@@ -79,23 +79,22 @@ def test_scientific_algorithm_bodies_unchanged(relative: str,class_name: str) ->
     assert body(Path('src/struct_agent/_vendor')/relative) == body(UPSTREAM/'src'/relative)
 
 
-def test_real_fea_matches_original_reference(tmp_path: Path) -> None:
-    # Frozen historical L17_101 parity regression; new engineering tests use configs/test_case.json.
+def test_real_fea_matches_current_detailed_result(tmp_path: Path) -> None:
     from struct_agent.adapters.fea import OpenSeesAdapter
-    layout = LayoutCandidate.model_validate_json(Path('outputs/migration_rcgnn_01/layout.json').read_text(encoding='utf-8'))
+    from struct_agent.adapters.physics import analysis_signature
+    layout = LayoutCandidate.model_validate_json(Path('outputs/residential_001_rcgnn_02/layout.json').read_text(encoding='utf-8'))
     spec = ProjectSpec.model_validate_json(Path('configs/reference_spec.json').read_text(encoding='utf-8'))
-    data = json.loads(Path('outputs/migration_casino_calibration_01/analyses/eval_00001.json').read_text(encoding='utf-8'))
+    data = json.loads(Path('outputs/member_diagnostics_baseline_04/analyses/eval_00001.json').read_text(encoding='utf-8'))
+    assert data['analysis']['analysis_signature'] == analysis_signature(), 'BLOCKED: regenerate current corrected diagnostic reference'
     design = DesignCandidate.model_validate_json(json.dumps(data['design']))
     record = OpenSeesAdapter(log_directory=tmp_path/'logs').evaluate(layout,design,spec,evaluation_id='regression_01')
     assert record.status == 'SUCCESS', record.error
-    reference = json.loads(Path('outputs/upstream_fea_regression_01/comparison.json').read_text(encoding='utf-8'))
-    for name,row in reference.items():
-        actual, expected = record.raw[name], row['actual']
+    for name, expected in data['analysis']['raw'].items():
+        actual = record.raw[name]
         if isinstance(expected,(str,bool)) or expected is None:
             assert actual == expected
         else:
             np.testing.assert_allclose(actual,expected,rtol=1e-5,atol=1e-8,err_msg=name)
-    assert record.feasible is False  # real analyzed example fails checks; not a solver failure
     assert Path(record.solver_log).is_file()
 
 

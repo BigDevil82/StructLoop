@@ -33,7 +33,8 @@ class AnalysisService:
         design.validate_against(spec)
         if design.layout_id != layout.layout_id:
             raise ValueError("Design/layout mismatch")
-        key = hashlib.sha256((layout.model_dump_json()+spec.model_dump_json()+str(sorted(design.values.items()))).encode()).hexdigest()
+        signature = getattr(self.solver, 'analysis_signature', type(self.solver).__qualname__)
+        key = hashlib.sha256((signature+layout.model_dump_json()+spec.model_dump_json()+str(sorted(design.values.items()))).encode()).hexdigest()
         if key in self._cache:
             return self._cache[key]
         if len(self.records) >= self.budget:

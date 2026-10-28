@@ -22,8 +22,10 @@ from .casino_assets import prepare_context
 
 
 class CasinoConfig(Contract):
-    feasibility_weights: Path
-    steel_weights: Path
+    feasibility_weights: Path | None = None
+    steel_weights: Path | None = None
+    use_surrogate: bool = False
+    surrogate_analysis_signature: str | None = None
     seed: int
     device: Literal["cpu", "cuda"] = "cpu"
     population_size: int = Field(default=24, ge=2)
@@ -104,10 +106,13 @@ def create_optimizer(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpe
     from struct_agent._vendor.shearwall_optimization.local_calibration import OnlineLocalCalibrationConfig
     from struct_agent._vendor.shearwall_optimization.surrogate_cost import SurrogateCostPreselectionConfig
     from struct_agent._vendor.shearwall_optimization.surrogate_screening import SurrogateScreeningConfig
-    for path in (cfg.feasibility_weights, cfg.steel_weights):
-        if not path.is_file():
+    if cfg.use_surrogate and getattr(evaluator.solver, 'fidelity', 'full') == 'full':
+        if cfg.surrogate_analysis_signature != getattr(evaluator.solver, 'analysis_signature', None) or cfg.surrogate_analysis_signature is None:
+            raise ValueError('BLOCKED: surrogate training physics do not match the current corrected FEA implementation')
+    for path in (cfg.feasibility_weights, cfg.steel_weights) if cfg.use_surrogate else ():
+        if path is None or not path.is_file():
             raise FileNotFoundError(f"BLOCKED: CASINO weights missing: {path}")
-    if cfg.device == "cuda" and not torch.cuda.is_available():
+    if cfg.use_surrogate and cfg.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("BLOCKED: explicitly requested CUDA is unavailable")
     directory.mkdir(parents=True, exist_ok=False)
     context = directory / "context"
@@ -115,13 +120,13 @@ def create_optimizer(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpe
     problem = CasinoProblem(layout,spec,evaluator,layout_path=layout_path,seed=cfg.seed)
     settings = GeneticAlgorithmConfig(population_size=cfg.population_size, generations=cfg.generations,
         elite_size=min(2,cfg.population_size), max_workers=None, seed=cfg.seed,
-        surrogate_screening=SurrogateScreeningConfig(enabled=True, artifact_path=str(cfg.feasibility_weights),
+        surrogate_screening=SurrogateScreeningConfig(enabled=cfg.use_surrogate, artifact_path=str(cfg.feasibility_weights),
             graph_cache_dir=str(context), layout_features_path=str(context/"layout_features.parquet"),
             screening_threshold=cfg.screening_threshold),
-        cost_preselection=SurrogateCostPreselectionConfig(enabled=True, steel_artifact_path=str(cfg.steel_weights),
+        cost_preselection=SurrogateCostPreselectionConfig(enabled=cfg.use_surrogate, steel_artifact_path=str(cfg.steel_weights),
             graph_cache_dir=str(context), layout_features_path=str(context/"layout_features.parquet"),
             eval_ratio=cfg.eval_ratio, min_eval_count=cfg.min_eval_count),
-        local_calibration=OnlineLocalCalibrationConfig(enabled=True, min_samples=cfg.calibration_min_samples,
+        local_calibration=OnlineLocalCalibrationConfig(enabled=cfg.use_surrogate, min_samples=cfg.calibration_min_samples,
             steel_min_samples=cfg.calibration_min_samples))
     # Weight construction must not overwrite the caller's process-global RNG states.
     with torch.random.fork_rng():
@@ -130,8 +135,9 @@ def create_optimizer(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpe
         # Upstream constructors auto-select CUDA. Make execution device explicit
         # at the adapter boundary; CPU is the reproducible regression default.
         for predictor in (optimizer.evaluator.screener, optimizer.evaluator.cost_estimator):
-            predictor.device = torch.device(cfg.device)
-            predictor.model.to(predictor.device)
+            if predictor is not None:
+                predictor.device = torch.device(cfg.device)
+                predictor.model.to(predictor.device)
     return optimizer
 
 

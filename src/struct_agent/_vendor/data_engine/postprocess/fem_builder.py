@@ -3,6 +3,7 @@ import numpy as np
 from shapely.geometry import GeometryCollection, LineString, MultiLineString, Polygon
 from shapely.ops import unary_union
 from struct_agent._vendor.data_engine.preprocess.room_analyzer import _walls_from_vector, get_room_edges
+from .topology_cleanup import clean_segments
 
 class FEMTopologyBuilder:
     """
@@ -59,7 +60,8 @@ class FEMTopologyBuilder:
                 segments.extend(wall_segs)
                 segments.extend(beam_segs)
         segments = self._split_at_intersections(segments)
-        segments = self._repair_short_misclassified_segments(segments, short_threshold=200.0)
+        segments = clean_segments(segments, snap_tolerance=self.snap_tolerance, min_wall_length=self.min_length)
+        segments = self._merge_collinear_same_type_segments(segments)
         self._build_topology(segments)
         self._classify_beams_by_length_distribution()
         return self._format_result()
@@ -187,7 +189,7 @@ class FEMTopologyBuilder:
         sorted_intervals = sorted(wall_intervals, key=lambda x: x[0])
         merged = [[sorted_intervals[0][0], sorted_intervals[0][1]]]
         for start, end in sorted_intervals[1:]:
-            if start <= merged[-1][1] + 0.02:
+            if start <= merged[-1][1] + self.gap_tolerance / skel_line.length:
                 merged[-1][1] = max(merged[-1][1], end)
             else:
                 merged.append([start, end])
@@ -207,15 +209,15 @@ class FEMTopologyBuilder:
             start_pt = tuple(p1 + vec * w_start)
             end_pt = tuple(p1 + vec * w_end)
             line = LineString([start_pt, end_pt])
-            wall_segments.append({'geometry': line, 'type': 'shearwall', 'length': line.length})
+            if line.length > 1e-8:
+                target = wall_segments if line.length >= self.min_length else beam_segments
+                target.append({'geometry': line, 'type': 'shearwall' if line.length >= self.min_length else 'beam', 'length': line.length})
         for b_start, b_end in beam_intervals:
             start_pt = tuple(p1 + vec * b_start)
             end_pt = tuple(p1 + vec * b_end)
             line = LineString([start_pt, end_pt])
-            if line.length >= 400:
+            if line.length > 1e-8:
                 beam_segments.append({'geometry': line, 'type': 'beam', 'length': line.length})
-            else:
-                wall_segments.append({'geometry': line, 'type': 'shearwall', 'length': line.length})
         return (wall_segments, beam_segments)
 
     def _extract_lines(self, geom) -> List[LineString]:
@@ -353,48 +355,6 @@ class FEMTopologyBuilder:
         if len_j > 1:
             rj = np.dot(np.array([cross_x, cross_y]) - pj1, vec_j) / (len_j * len_j)
             split_ratios[j].append(rj)
-
-    def _repair_short_misclassified_segments(self, segments: List[dict], short_threshold: float=200.0) -> List[dict]:
-        """
-        修复短构件误分类并回并为完整长构件。
-
-        规则：
-        1. 先识别候选短构件（长度 < short_threshold）；
-        2. 对短构件任一端点，若仅连接 1 个其它构件且该构件类型与其相反，则将该短构件标记为“需翻转类型”；
-        3. 所有候选识别完成后统一翻转，避免边遍历边修改导致漏检；
-        4. 再按“端点度数=2 + 共线 + 同类型”迭代合并，消除零碎段。
-        """
-        if not segments:
-            return segments
-        endpoint_map = self._build_endpoint_segment_map(segments)
-        flip_type: Dict[int, str] = {}
-        for idx, seg in enumerate(segments):
-            seg_type = seg.get('type')
-            seg_len = float(seg.get('length', 0.0))
-            if seg_type not in ('beam', 'shearwall') or seg_len >= short_threshold:
-                continue
-            target_type = 'beam' if seg_type == 'shearwall' else 'shearwall'
-            p0_key, p1_key = self._segment_endpoint_keys(seg['geometry'])
-            for endpoint_key in (p0_key, p1_key):
-                neighbors = [n for n in endpoint_map.get(endpoint_key, []) if n != idx]
-                if len(neighbors) != 1:
-                    continue
-                neighbor_idx = neighbors[0]
-                neighbor_type = segments[neighbor_idx].get('type')
-                if neighbor_type == target_type:
-                    flip_type[idx] = target_type
-                    break
-        if not flip_type:
-            return segments
-        repaired_segments = []
-        for idx, seg in enumerate(segments):
-            new_seg = dict(seg)
-            if idx in flip_type:
-                new_seg['type'] = flip_type[idx]
-            repaired_segments.append(new_seg)
-        merged_segments = self._merge_collinear_same_type_segments(repaired_segments)
-        print(f'    短构件修复: 翻转={len(flip_type)} 段, 合并后段数 {len(segments)} -> {len(merged_segments)}')
-        return merged_segments
 
     def _segment_endpoint_keys(self, line: LineString) -> Tuple[Tuple[int, int], Tuple[int, int]]:
         """将线段端点离散化为整数网格键值，便于拓扑判断。"""

@@ -2,7 +2,6 @@ import logging
 from ..analysis.results import AnalysisResult
 from ..builders.base import ModelBuildResult
 from ..core.config import ModelConfig
-from ..core.constants import MIN_WALL_LEN_CHECK_THRESHOLD_M
 from .beam import BeamReinforcementDesigner
 from .constants import ReinforcementDesignConstants
 from .extractor import DesignDemandExtractor
@@ -25,5 +24,5 @@ class ReinforcementDesignPipeline:
         beam_demands, wall_demands = self.extractor.extract(self.analysis_result)
         story_profiles = {profile.story: profile for profile in self.config.resolve_story_profiles()}
         beam_results = [self.beam_designer.design(demand, story_profiles[demand.story].material) for demand in beam_demands]
-        wall_results = [self.wall_designer.design(demand, story_profiles[demand.story].material) for demand in wall_demands if demand.length_m > MIN_WALL_LEN_CHECK_THRESHOLD_M]
+        wall_results = [self.wall_designer.design(demand, story_profiles[demand.story].material) for demand in wall_demands]
         return ReinforcementDesignSummary(beam_results=beam_results, wall_results=wall_results)

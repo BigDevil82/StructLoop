@@ -94,7 +94,7 @@ class ResponseSpectrumAnalyzer:
             store['shear'].append(shear_v)
         for unit in self.context.wall_story_element_units:
             key = (unit.wall_id, unit.story)
-            axial_n, moment_m, shear_v = extract_wall_force_tuple(unit, dir_name)
+            axial_n, moment_m, shear_v = extract_wall_force_tuple(unit)
             store = wall_modal_forces.setdefault(key, {'axial': [], 'moment': [], 'shear': []})
             store['axial'].append(axial_n)
             store['moment'].append(moment_m)

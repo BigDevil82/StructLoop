@@ -55,6 +55,8 @@ class OpenSeesAdapter:
         if diagnostics_directory is not None:
             diagnostics_directory.mkdir(parents=True, exist_ok=False)
         self.diagnostics_directory = diagnostics_directory
+        from .physics import analysis_signature
+        self.analysis_signature = analysis_signature()
 
     def evaluate(self, layout: LayoutCandidate, design: DesignCandidate,
                  spec: ProjectSpec, *, evaluation_id: str) -> AnalysisRecord:
@@ -96,7 +98,7 @@ class OpenSeesAdapter:
             return AnalysisRecord(evaluation_id=evaluation_id, **context, fidelity="full", status="SUCCESS",
                 solver="OpenSees/MVLEM_3D", solver_version=str(ops.version()),
                 elapsed_s=perf_counter()-started, feasible=bool(result.feasible and result.design_passed),
-                raw=json_safe(raw), error=None,solver_log=str(log_path))
+                raw=json_safe(raw), error=None,solver_log=str(log_path), analysis_signature=self.analysis_signature)
         except Exception as exc:
             if self.diagnostics_directory is not None:
                 from .fea_diagnostics import DiagnosticEvidenceError
@@ -104,5 +106,5 @@ class OpenSeesAdapter:
                     status = "INVALID_RESULT"
             return AnalysisRecord(evaluation_id=evaluation_id, **context, fidelity="full", status=status,
                 solver="OpenSees/MVLEM_3D", solver_version=str(ops.version()), elapsed_s=perf_counter()-started,
-                feasible=None, raw={}, solver_log=str(log_path),error=ErrorRecord(error_type=type(exc).__name__, message=str(exc),
+                feasible=None, raw={}, solver_log=str(log_path),analysis_signature=self.analysis_signature,error=ErrorRecord(error_type=type(exc).__name__, message=str(exc),
                     traceback=traceback.format_exc(), context=context, attempt=1))

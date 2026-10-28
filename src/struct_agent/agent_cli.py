@@ -34,6 +34,7 @@ def main() -> None:
     parser.add_argument("--generations", type=int, default=20)
     parser.add_argument("--max-steps", type=int, default=30)
     parser.add_argument("--screening-threshold", type=float)
+    parser.add_argument("--use-surrogate", action="store_true", help="Only use physics-compatible trained weights")
     parser.add_argument("--assets", type=Path, default=Path("configs/local_assets.json"))
     parser.add_argument("--llm-config", type=Path, default=Path("configs/llm.json"))
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
@@ -42,11 +43,14 @@ def main() -> None:
     args = parser.parse_args()
     if args.budget_fea < 1 or args.max_steps < 1:
         parser.error("Budget and max-steps must be positive")
-    assets = load_assets(args.assets, names=("feasibility", "steel"))
+    assets = load_assets(args.assets, names=("feasibility", "steel") if args.use_surrogate else ())
     layouts = tuple(LayoutCandidate.model_validate_json(p.read_text(encoding="utf-8")) for p in args.layout)
     rooms = RoomGraph.model_validate_json(args.rooms.read_text(encoding="utf-8"))
     spec = ProjectSpec.model_validate_json(args.spec.read_text(encoding="utf-8"))
-    cfg = CasinoConfig(feasibility_weights=assets["feasibility"], steel_weights=assets["steel"], seed=args.seed,
+    metadata = json.loads(args.assets.read_text(encoding="utf-8")) if args.use_surrogate else {}
+    signatures = {metadata[k].get("analysis_signature") for k in assets}
+    cfg = CasinoConfig(feasibility_weights=assets.get("feasibility"), steel_weights=assets.get("steel"), seed=args.seed,
+                       use_surrogate=args.use_surrogate, surrogate_analysis_signature=next(iter(signatures)) if len(signatures) == 1 else None,
                        population_size=args.population, generations=args.generations, screening_threshold=args.screening_threshold)
     inputs = {**assets, "rooms": args.rooms, "spec": args.spec,
               **{f"layout_{i}": p for i, p in enumerate(args.layout)}}

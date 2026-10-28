@@ -58,16 +58,17 @@ DEFAULT_COMBINATIONS: list[LoadCombinationDef] = [LoadCombinationDef(name='1.3D+
 class ULSCombinationAnalyzer:
     """Combine basic case effects and extract ULS envelopes for members.
 
-    Notes:
-    - Basic case effects are passed in as per-member force dictionaries.
-    - Force tuples in current analysis pipeline are unsigned effect envelopes.
-      For safety, this analyzer uses abs(factor) weighted summation.
-    - Missing basic cases are treated as zero effects.
+    Static effects retain their algebraic signs. EqX/EqY are nonnegative CQC
+    amplitudes, combined using explicit +/- factors. Envelopes store absolute
+    effect magnitudes and retain the controlling signed combination.
+    Missing cases or member effects are errors, never implicit zero loads.
     """
 
     def __init__(self, context: AnalysisModelContext, combinations: list[LoadCombinationDef] | None=None, beta_c: float=1.0):
         self.context = context
-        self.combinations = combinations or DEFAULT_COMBINATIONS
+        self.combinations = DEFAULT_COMBINATIONS if combinations is None else combinations
+        if not self.combinations or len({c.name for c in self.combinations}) != len(self.combinations):
+            raise ValueError("Nonempty combinations with unique names required")
         self.beta_c = beta_c
         self.combo_type_by_name = {item.name: item.type for item in self.combinations}
 
@@ -92,9 +93,10 @@ class ULSCombinationAnalyzer:
     def _combine_one_force(self, key: tuple[int, int], combo: LoadCombinationDef, case_forces: dict[str, dict[tuple[int, int], ForceTuple]]) -> ForceTuple:
         v0, v1, v2 = (0.0, 0.0, 0.0)
         for case_name, factor in combo.factors.items():
-            item = case_forces.get(case_name, {})
-            a0, a1, a2 = item.get(key, (0.0, 0.0, 0.0))
-            scale = abs(float(factor))
+            if case_name not in case_forces or key not in case_forces[case_name]:
+                raise ValueError(f"Missing member effect {key} in basic case {case_name}")
+            a0, a1, a2 = case_forces[case_name][key]
+            scale = float(factor)
             v0 += scale * float(a0)
             v1 += scale * float(a1)
             v2 += scale * float(a2)
@@ -110,17 +112,20 @@ class ULSCombinationAnalyzer:
             moment_combo = ''
             shear_max = -1.0
             shear_combo = ''
+            shear_score = -1.0
             for combo_name, forces in combo_forces.items():
-                axial_n, moment_n_m, shear_n = forces.get(key, (0.0, 0.0, 0.0))
+                axial_n, moment_n_m, shear_n = (abs(v) for v in forces[key])
                 if axial_n > axial_max:
                     axial_max = axial_n
                     axial_combo = combo_name
                 if moment_n_m > moment_max:
                     moment_max = moment_n_m
                     moment_combo = combo_name
-                if shear_n > shear_max:
+                limit = 0.15 if self.combo_type_by_name[combo_name] == 'Seismic' else 0.2
+                if shear_n / limit > shear_score:
                     shear_max = shear_n
                     shear_combo = combo_name
+                    shear_score = shear_n / limit
             envelope[key] = MemberForceEnvelope(max_axial_n=max(axial_max, 0.0), max_axial_combo=axial_combo, max_moment_n_m=max(moment_max, 0.0), max_moment_combo=moment_combo, max_shear_n=max(shear_max, 0.0), max_shear_combo=shear_combo)
         return envelope
 

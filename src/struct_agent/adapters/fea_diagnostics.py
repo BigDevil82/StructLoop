@@ -9,14 +9,13 @@ import openseespy.opensees as ops
 from struct_agent._vendor.shearwall_modeling.analysis.evaluation import AnalysisResultBuilder, SeismicEvaluationPipeline
 from struct_agent._vendor.shearwall_modeling.builders.base import AnalysisModelContext
 from struct_agent._vendor.shearwall_modeling.design.pipeline import ReinforcementDesignPipeline
-from struct_agent._vendor.shearwall_modeling.core.constants import MIN_WALL_LEN_CHECK_THRESHOLD_M
 from struct_agent._vendor.shearwall_modeling.core.domain import FEMInput
 from struct_agent._vendor.shearwall_modeling.parametric.analysis import _create_builder, build_model_config_from_params
 from struct_agent._vendor.shearwall_modeling.parametric.types import DatasetGenerationConfig, ParametricAnalysisResult, ParametricModelParams
 from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import LayoutCandidate
 from .fea_member_evidence import collect_members
-from .fea_summary import summarize_native
+from struct_agent._vendor.shearwall_modeling.parametric.summary import summarize_native
 
 
 class DiagnosticEvidenceError(RuntimeError):
@@ -40,10 +39,11 @@ def analyze_detailed(topology: FEMInput, params: ParametricModelParams, cfg: Dat
         summary = summarize_native(build, analysis, overall, directions, design)
         try:
             write_json(directory / "native_summary.json", asdict(summary))
-            members = collect_members(layout, context, analysis, design, beta_c=builder.uls_analyzer.beta_c)
+            members = collect_members(layout, context, analysis, design, beta_c=builder.uls_analyzer.beta_c,
+                combination_types=builder.uls_analyzer.combo_type_by_name)
             write_json(directory / "members.json", {"fidelity": "full", "coordinate_system": "global_xy",
                 "units": {"length": "m", "force": "N", "stress": "Pa"},
-                "reinforcement_wall_min_length_m_exclusive": MIN_WALL_LEN_CHECK_THRESHOLD_M,
+                "all_modeled_walls_reinforcement_checked": True,
                 "members": [m.model_dump() for m in members]})
             write_json(directory / "model_config.json", asdict(model_cfg))
             write_json(directory / "checks.json", {"overall": asdict(overall),

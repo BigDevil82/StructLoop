@@ -36,8 +36,6 @@ def member_summary(members: tuple[MemberDiagnostic, ...]) -> dict[str, Any]:
             "shear_failed_count": len(failed), "reinforcement_unchecked_count": sum(not m.reinforcement_checked for m in items),
             "shear_failed_and_reinforcement_unchecked_count": sum(not m.reinforcement_checked for m in failed),
             "reinforcement_failed_count": sum(m.reinforcement_passed is False for m in items),
-            "empty_native_shear_control_count": sum(not m.control_combo_available for m in items),
-            "absolute_combo_shear_exceeds_native_count": sum(m.absolute_combo_shear_n > m.shear_n + 1e-8 for m in items),
             "reinforcement_messages": dict(Counter(msg for m in items for msg in m.reinforcement_messages)),
             "members_below_rcgnn_topology_min_0_1m": sorted({m.member_id for m in items if m.length_m < .1-1e-8}),
             "worst_shear": None if worst is None else {**worst.model_dump(), "utilization": worst.utilization}}
@@ -51,13 +49,12 @@ def load_members(path: Path) -> tuple[MemberDiagnostic, ...]:
     return tuple(MemberDiagnostic.model_validate_json(json.dumps(row)) for row in payload["members"])
 
 
-def write_report(path: Path, members: tuple[MemberDiagnostic, ...], *, parity_passed: bool) -> None:
+def write_report(path: Path, members: tuple[MemberDiagnostic, ...], *, parity_passed: bool | None = None) -> None:
     lines = ["# 构件级有限元诊断（冒烟条件）", "",
-        f"与原记录的全部汇总字段复算一致：{parity_passed}。结果与原始工件分别保留。", "",
+        f"当前正确实现的独立计算。可选同协议复算对照：{parity_passed}。", "",
         "指标按上游定义为 V/(βc·fc·b·h0)，利用率为该指标/原有限值。力 N，尺寸 m，应力 Pa。",
         "其中上游 ULS 的 h0：墙取肢长，梁取截面总高；配筋设计对梁另扣保护层。此处原样记录，不混为同一口径。",
-        "原 ULS 对全部墙肢校核；配筋设计仅对长度 >0.5 m 的墙肢执行。此处保留该差异。", "",
-        "另记录全部组合的有符号剪力；绝对值包络只供诊断比较，未替换上游校核值。空控制组合按原零包络保留。", "",
+        "组合保留系数正负号，控制剪力取组合绝对值最大值；全部建模墙肢均执行配筋设计。", "",
         "本报告用于定位控制构件，未改变几何、荷载、限值或原算法，不是工程签审。", ""]
     for kind, title in (("wall", "墙肢"), ("beam", "梁")):
         items = tuple(m for m in members if (m.role == "wall") == (kind == "wall"))

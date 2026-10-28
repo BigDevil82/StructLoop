@@ -13,4 +13,4 @@
 .gitattributes text eol=lf
 .gitignore text eol=lf
 # Migrated source bytes are audited by migration_manifest.json; preserve their line endings.
-src/struct_agent/_vendor/** -text
+src/struct_agent/_vendor/** -text whitespace=cr-at-eol,-blank-at-eof

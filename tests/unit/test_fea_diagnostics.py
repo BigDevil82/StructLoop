@@ -1,5 +1,4 @@
 """Synthetic detailed records validate diagnostics only, never physical results."""
-import ast
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -9,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from struct_agent.adapters.fea_member_evidence import collect_members
-from struct_agent.adapters.fea_summary import summarize_native
+from struct_agent._vendor.shearwall_modeling.parametric.summary import summarize_native
 from struct_agent.schemas import LayoutCandidate
 from struct_agent.schemas.diagnostics import MemberDiagnostic
 from struct_agent.services.diagnostics import compare_responses, member_summary, write_report
@@ -17,17 +16,7 @@ from struct_agent._vendor.shearwall_modeling.parametric.types import ParametricA
 
 
 @pytest.mark.parametrize("empty,ratio", [(False, .7), (False, None), (True, .7), (True, 0.)])
-def test_summary_matches_unchanged_native_aggregation(empty: bool, ratio: float | None) -> None:
-    tree = ast.parse(Path("src/struct_agent/_vendor/shearwall_modeling/parametric/analysis.py").read_text(encoding="utf-8"))
-    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "analyze_parametric_model")
-    body = next(n for n in function.body if isinstance(n, ast.Try)).body
-    start = next(i for i, n in enumerate(body) if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "periods")
-    reference_body = [n for n in body[start:] if not (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "design_summary")]
-    arguments = ["build_result", "analysis_result", "overall_result", "dir_results", "design_summary"]
-    reference = ast.FunctionDef(name="reference", args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=n) for n in arguments],
-        kwonlyargs=[], kw_defaults=[], defaults=[]), body=reference_body, decorator_list=[])
-    namespace = {"ParametricAnalysisResult": ParametricAnalysisResult}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[reference], type_ignores=[])), "native_aggregation", "exec"), namespace)
+def test_shared_summary_matches_explicit_expected_values(empty: bool, ratio: float | None) -> None:
     metric = NS(axial_ratio=.4, axial_ratio_limit=.6, shear_pressure_ratio=.3, shear_pressure_ratio_limit=.15)
     # Equal utilization with a different ratio/limit: native last-item tie rule.
     tied = NS(axial_ratio=.2, axial_ratio_limit=.3, shear_pressure_ratio=.4, shear_pressure_ratio_limit=.2)
@@ -39,8 +28,18 @@ def test_summary_matches_unchanged_native_aggregation(empty: bool, ratio: float 
         is_interstory_drift_passed=True, is_period_ratio_passed=ratio is not None,
         is_wall_axial_passed=True, is_wall_shear_pressure_passed=False, is_beam_shear_pressure_passed=False)
     directions = {"X": NS(metrics=[NS(torsion_ratio=1., shear_weight_ratio=.1, stiffness_ratio_adjacent=.9)], max_interstory_drift_ratio=.0005)}
-    expected = namespace["reference"](build, analysis, overall, directions, design)
-    assert asdict(summarize_native(build, analysis, overall, directions, design)) == asdict(expected)
+    actual = asdict(summarize_native(build, analysis, overall, directions, design))
+    assert actual == dict(converged=True, feasible=False, design_passed=False,
+        design_failed_beam_count=2, design_failed_wall_count=0, material_concrete_kg=500., material_steel_kg=50.,
+        mass_total_t=2.02, T1=1., T2=.9, T3=.8, T4=.7, T5=.6, T6=.5,
+        period_ratio=1.25 if ratio is None else ratio, period_ratio_available=ratio is not None,
+        torsion_ratio=1., min_shear_weight_ratio=.1, max_drift_ratio=.0005, min_stiffness_ratio=.9,
+        max_wall_axial_ratio=0. if empty else .2, max_wall_axial_limit=1. if empty else .3,
+        max_wall_shear_ratio=0. if empty else .4, max_wall_shear_limit=1. if empty else .2,
+        max_beam_shear_ratio=0. if empty else .4, max_beam_shear_limit=1. if empty else .2,
+        torsion_passed=True, shear_weight_passed=True, stiffness_passed=True, drift_passed=True,
+        period_ratio_passed=ratio is not None, wall_axial_passed=True, wall_shear_passed=False,
+        beam_shear_passed=False, error='')
 
 
 def evidence(*, negative_wall: bool = False) -> tuple[MemberDiagnostic, ...]:
@@ -64,20 +63,18 @@ def evidence(*, negative_wall: bool = False) -> tuple[MemberDiagnostic, ...]:
         wall_forces_by_combo={"EQ": {(0, 1): (0., 0., 5.*14.3e6*.2*.001)}},
         beam_forces_by_combo={"EQ": {(1, 1): (0., 0., .3*14.3e6*.2*.5)}})
     if negative_wall:
-        item = analysis.wall_uls_metrics[0]
-        item.shear_pressure_ratio, item.shear_pressure_ratio_limit = 0., .2
-        item.shear_control_combo, item.shear_control_combo_type, item.is_shear_pressure_passed = "", "NonSeismic", True
         analysis.wall_forces_by_combo["EQ"][0, 1] = (0., 0., -14300.)
-    design = NS(wall_results=[], beam_results=[NS(beam_id=1, story=1, is_passed=False, messages=["beam_shear_section_insufficient"])])
-    return collect_members(layout, context, analysis, design, beta_c=1.)
+    design = NS(wall_results=[NS(wall_id=0, story=1, is_passed=False, messages=["section_insufficient"])],
+        beam_results=[NS(beam_id=1, story=1, is_passed=False, messages=["beam_shear_section_insufficient"])])
+    return collect_members(layout, context, analysis, design, beta_c=1., combination_types={"EQ": "Seismic"})
 
 
-def test_short_wall_uls_failure_and_absent_reinforcement_remain_distinct(tmp_path: Path) -> None:
+def test_short_wall_uls_and_reinforcement_are_both_recorded(tmp_path: Path) -> None:
     members = evidence()
-    assert members[0].shear_passed is False and members[0].reinforcement_passed is None
+    assert members[0].shear_passed is False and members[0].reinforcement_passed is False
     assert members[0].denominator_n == pytest.approx(2860.)
     summary = member_summary(members)
-    assert summary["wall"]["shear_failed_and_reinforcement_unchecked_count"] == 1
+    assert summary["wall"]["shear_failed_and_reinforcement_unchecked_count"] == 0
     assert summary["wall"]["members_below_rcgnn_topology_min_0_1m"] == ["w"]
     assert summary["beam"]["reinforcement_messages"] == {"beam_shear_section_insufficient": 1}
     write_report(tmp_path / "report.md", members, parity_passed=True)
@@ -92,15 +89,11 @@ def test_inconsistent_force_evidence_rejected() -> None:
         MemberDiagnostic.model_validate_json(json.dumps(row))
 
 
-def test_native_empty_control_negative_shear_is_preserved_not_corrected() -> None:
-    members = evidence(negative_wall=True)
-    wall = members[0]
-    assert wall.shear_n == 0. and wall.shear_ratio == 0. and wall.shear_passed
-    assert wall.control_combo == "" and wall.control_combo_available is False
+def test_negative_shear_is_captured_as_absolute_envelope() -> None:
+    wall = evidence(negative_wall=True)[0]
+    assert wall.shear_n == 14300. and wall.shear_ratio == 5. and not wall.shear_passed
+    assert wall.control_combo == "EQ"
     assert wall.combo_shear_n == {"EQ": -14300.} and wall.absolute_combo_shear_n == 14300.
-    summary = member_summary(members)["wall"]
-    assert summary["empty_native_shear_control_count"] == 1
-    assert summary["absolute_combo_shear_exceeds_native_count"] == 1
 
 
 def test_replay_comparison_retains_missing_fields_and_failure_flags() -> None:

@@ -26,9 +26,9 @@ class MemberDiagnostic(Contract):
     shear_ratio: float = Field(ge=0.)
     shear_limit: float = Field(gt=0.)
     control_combo: str
-    control_combo_available: bool
     control_combo_type: Literal["Seismic", "NonSeismic"]
     combo_shear_n: dict[str, float]
+    combo_shear_limits: dict[str, float]
     shear_passed: bool
     reinforcement_checked: bool
     reinforcement_passed: bool | None
@@ -51,8 +51,13 @@ class MemberDiagnostic(Contract):
             raise ValueError("Member shear pass flag disagrees with native ratio/limit")
         if self.reinforcement_checked != (self.reinforcement_passed is not None):
             raise ValueError("Absent reinforcement check must have unknown pass status")
-        if self.control_combo_available != (self.control_combo in self.combo_shear_n):
-            raise ValueError("Control-combination availability disagrees with original force data")
-        if not self.control_combo_available and (self.control_combo or self.shear_n != 0.):
-            raise ValueError("Only the native empty-combination zero envelope may be absent")
+        if self.control_combo not in self.combo_shear_n:
+            raise ValueError("Control combination missing from force data")
+        if self.combo_shear_n.keys() != self.combo_shear_limits.keys() or any(v <= 0 for v in self.combo_shear_limits.values()):
+            raise ValueError("Each combination requires its own positive shear limit")
+        if self.shear_limit != self.combo_shear_limits[self.control_combo] or not math.isclose(self.shear_n, abs(self.combo_shear_n[self.control_combo]), rel_tol=1e-9, abs_tol=1e-8):
+            raise ValueError("Selected shear and limit must belong to the controlling combination")
+        worst = max(abs(v)/self.denominator_n/self.combo_shear_limits[k] for k,v in self.combo_shear_n.items())
+        if not math.isclose(self.utilization, worst, rel_tol=1e-9, abs_tol=1e-8):
+            raise ValueError("Selected combination must govern utilization across all limits")
         return self

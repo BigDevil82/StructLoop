@@ -10,6 +10,8 @@ from struct_agent.schemas import LayoutCandidate, ProjectSpec, RoomGraph
 
 
 def load_assets(path: Path, *, names: tuple[str, ...]) -> dict[str, Path]:
+    if not names:
+        return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
     paths = {}
     for name in names:
@@ -43,6 +45,7 @@ def main() -> None:
     optimization.add_argument("--device", choices=("cpu", "cuda"), default="cpu",
                               help="CASINO surrogate inference device; CPU is the regression default")
     optimization.add_argument("--screening-threshold", type=float, default=None)
+    optimization.add_argument("--use-surrogate", action="store_true", help="Require weights trained against the current FEA signature")
     mock = sub.add_parser("run-case", help="Synthetic state-machine verification only; no real FEA")
     mock.add_argument("--case", type=Path, required=True)
     mock.add_argument("--run", type=Path, required=True)
@@ -64,7 +67,7 @@ def main() -> None:
                              policy=args.policy, approved_mock_layouts=tuple(args.approve_mock_layout))
         print(f"MOCK ONLY: {state.status}; mock evaluations={state.fea_calls_used}; artifacts: {args.run}")
         return
-    names = tuple(f"rc_fold_{i}" for i in range(5)) if args.command == "generate" else ("feasibility", "steel")
+    names = tuple(f"rc_fold_{i}" for i in range(5)) if args.command == "generate" else (("feasibility", "steel") if args.use_surrogate else ())
     assets = load_assets(args.assets, names=names)
     if args.command == "generate":
         import numpy as np
@@ -101,11 +104,14 @@ def main() -> None:
         spec = ProjectSpec.model_validate_json(args.spec.read_text(encoding="utf-8"))
         rooms = RoomGraph.model_validate_json(args.rooms.read_text(encoding="utf-8"))
         layout = LayoutCandidate.model_validate_json(args.layout.read_text(encoding="utf-8"))
-        cfg = CasinoConfig(feasibility_weights=assets["feasibility"], steel_weights=assets["steel"],
+        metadata = json.loads(args.assets.read_text(encoding="utf-8")) if args.use_surrogate else {}
+        signatures = {metadata[k].get("analysis_signature") for k in assets}
+        cfg = CasinoConfig(feasibility_weights=assets.get("feasibility"), steel_weights=assets.get("steel"),
+            use_surrogate=args.use_surrogate, surrogate_analysis_signature=next(iter(signatures)) if len(signatures) == 1 else None,
             seed=args.seed,population_size=args.population,generations=args.generations,
             screening_threshold=args.screening_threshold,device=args.device)
         inputs = {"spec":args.spec,"rooms":args.rooms,"layout":args.layout,
-                  "feasibility":assets["feasibility"],"steel":assets["steel"]}
+                  **assets}
         create_run(args.run,seed=args.seed,inputs=inputs,config={**cfg.model_dump(mode="json"),"budget":args.budget_fea,
             "generations_per_step": args.generations_per_step})
         evaluator = AnalysisService(OpenSeesAdapter(log_directory=args.run/"solver_logs"),

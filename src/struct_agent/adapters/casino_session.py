@@ -43,7 +43,8 @@ class CasinoSession:
             write_json(directory / f"{name}.json", value.model_dump())
         write_json(directory / "session.json", {**self.binding, "config": cfg.model_dump(mode="json"),
             "fidelity": getattr(evaluator.solver, "fidelity", "full"),
-            "weights_sha256": {"feasibility": sha256(cfg.feasibility_weights), "steel": sha256(cfg.steel_weights)},
+            "weights_sha256": {k: sha256(p) for k, p in (("feasibility", cfg.feasibility_weights), ("steel", cfg.steel_weights))
+                               if cfg.use_surrogate and p is not None},
             "upstream_random_seeds": {"exploration": 20260621, "calibration": 0},
             "resume_scope": "in_process_generation_boundary"})
 

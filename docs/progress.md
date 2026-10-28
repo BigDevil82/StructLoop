@@ -437,3 +437,74 @@ Phase 4 的基础工程验收路径已打通：实际反馈后继续优化、获
 这些变化会影响 FEA 指标、可行性标签和 CASINO 权重适用性，按 AGENTS.md 第 7 条需人工确认；
 须显式版本化分析协议与缓存绑定，保留旧路径和旧结果。新几何仍按版本供工程师检查。
 由于本轮定位到上述真实问题，正式三策略对照配置/运行暂不扩大；修正并复验后再冻结 pilot。
+
+## 2026-10-28：直接修正计算与拓扑实现，不保留错误分支
+
+### 执行规则
+
+用户明确要求“有问题就改……不需要保留旧版……确保逻辑正确……不需要经过我确认”。
+已将此授权写入 AGENTS.md 第7条和 PLAN 顶部。实现 bug 直接修复；工程条件不编造、最终工程签审独立处理。
+以下为实际修复，不再是待确认方案。原 Png2Dxf 仓库只读，本项目迁移副本按正确逻辑维护。
+
+### 修复内容
+
+- ULS：组合保留系数正负；负效应取绝对值参与控制包络，不再归零；不同限值下按利用率选控制组合。
+  增加反例：非地震180/0.2与地震170/0.15，后者必须控制。缺失工况不能隐式补零。
+- 力提取：梁改取 localForce 并统一 j 端截面图弯矩符号；墙剪力投影自身平面方向，不混入面外分量。
+- CQC：输入是 omega²，相关系数用频率比 sqrt(lambda_i/lambda_j)，并正确处理零阻尼与无效输入。
+  核对 OpenSees 坐标文档及 ANSYS 1%阻尼近频振型算例，资料链接见 `docs/physics_fixes.md`。
+- 拓扑：零区间不生成墙；未预测间隙保留为梁；合并间隙用 mm 距离而非0.02比例；
+  固定锚点2 mm吸附避免链式漂移，落实最小墙长，保留边界连接与T节点，删除旧短段翻转逻辑。
+- 配筋：所有建模墙肢执行设计，取消 <=0.5 m 漏检。诊断采集要求每个构件有设计记录和真实控制组合。
+- 普通/详细 FEA 共用 `parametric/summary.py`；删除重复 `adapters/fea_summary.py`。
+  删除未使用且错误的重复组合方法，没有新增旧算法开关。
+- 缓存/标签：记录与缓存键绑定当前分析实现指纹。旧代理权重缺少新标签兼容证据，真实优化默认直接FEA，
+  只有训练指纹匹配的权重可启用代理；mock测试可验证旧权重的机械接口，不混入真实研究结论。
+  没有重训模型或改动权重。迁移清单更新本地哈希及修正说明。
+
+### 测试
+
+针对性测试覆盖有符号组合、负/零包络、不同限值控制项、旋转墙投影、CQC数值例、
+墙设计覆盖、几何连接/零区间/不链式吸附、缓存实现隔离和旧权重拒绝。
+新增3个真实小型悬臂梁（X/Y/45°），逐项对照 M=PL、V=P、位移 PL³/(3EI)。
+测试数据/参考均切换到修正后的当前实现，不再要求复现错误的历史数值。
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_fea_physics.py tests/unit/test_fea_diagnostics.py tests/unit/test_topology_cleanup.py tests/unit/test_analysis_compatibility.py tests/integration/test_opensees_beam_mechanics.py --run-real
+# 29 passed, 1 warning（随后单独增加的全墙设计覆盖测试也通过）
+.venv/Scripts/python.exe -m pytest -q --run-real
+# 103 passed, 8 warnings in 95.72s；0 failed，0 skipped
+```
+
+103项包含所有本地权重/真实求解显式测试。8个提示为 PyG 与 ezdxf/pyparsing 的弃用提示。
+普通/详细真实入口独立计算的35字段对照通过，未通过放宽数值容差获得通过。
+
+### 工件和真实计算
+
+- `outputs/residential_001_rcgnn_02/`：149墙、81梁；`outputs/residential_001_symmetry_03/`：187墙、73梁。
+  两布局均为43个楼板区域，最短墙均>=0.1 m，无1 mm墙段，拓扑验证通过。输入图和RC-GNN权重不变。
+- 最终诊断 `outputs/member_diagnostics_{baseline,symmetry}_04/`：各1次真实建筑FEA，均 SUCCESS 但不可行。
+  墙配筋检查分别4172/5236项，漏检均为0；墙设计失败133/506项，梁设计失败7/28项。
+- 最终 Agent 冒烟 `outputs/physics_fix_agent_02/`：当前正确实现、预算1、代理禁用，实际FEA=1，正常结束。
+- 核验 `outputs/physics_fixes_verification_01/verification.json`：检查实现指纹、几何最小长度、
+  全构件设计覆盖、预算和代理禁用。核验自身不新增求解。
+- 实现指纹 `981ea4234286f985cdfeb0fc4181c20bd245c26e82362dba6e7034344b625644`。
+
+本轮还运行过 `_03` 诊断、`physics_fix_agent_01` 和一次中间默认入口对照；随后发现跨限值控制项问题，
+重新生成 `_04` 最终结果并重跑全部测试。建筑规模真实计算本轮共9次：中间验证5次，最终诊断2次、
+最终Agent1次、最终默认入口对照1次。都保留日志；中间结果不作为当前协议的论文标签。
+小型解析梁测试另属软件验证，不计入设计优化的预算或性能结论。
+
+真实命令：
+
+```powershell
+.venv/Scripts/python.exe -m struct_agent.cli generate --run outputs/residential_001_rcgnn_02 --seed 42
+.venv/Scripts/python.exe scripts/prepare_symmetry_candidate.py --source-run outputs/residential_001_rcgnn_02 --run outputs/residential_001_symmetry_03 --seed 42
+.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/residential_001_rcgnn_02/layout.json --spec configs/reference_spec.json --design outputs/physics_fix_inputs_01/design_baseline.json --run outputs/member_diagnostics_baseline_04
+.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/residential_001_symmetry_03/layout.json --spec configs/reference_spec.json --design outputs/physics_fix_inputs_01/design_symmetry.json --run outputs/member_diagnostics_symmetry_04
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_02/layout.json --rooms outputs/residential_001_rcgnn_02/room_graph.json --spec configs/reference_spec.json --run outputs/physics_fix_agent_02 --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 1 --population 2 --generations 1
+```
+
+以上目录已存在；复跑另取新名称。详细变更、使用方法及权重边界见 `docs/physics_fixes.md`。
+下一最小任务：依据修正后的控制构件完善布局/参数策略，积累当前物理实现的可信样本，验证/更新代理标签兼容性。
+目前尚无可行解，不宣称已完成工程设计或证明 Agent 优于基线。

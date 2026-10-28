@@ -153,8 +153,9 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 
 已补充可选构件级 FEA 诊断，可复算某条真实记录并保留控制构件、组合剪力及配筋消息：
 `.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --help`。
-最新核查发现极短墙段及有符号剪力/包络契约差异，见 [构件诊断记录](docs/member_diagnostics.md)。
-正式对照前需要先确认并复验这些计算口径。
+极短墙段、内力组合/包络、局部坐标及墙配筋漏检等问题已直接修复，见 [计算逻辑修正记录](docs/physics_fixes.md)。
+当前几何使用 `residential_001_rcgnn_02` / `residential_001_symmetry_03`，历史错误结果不作回归目标。
+真实优化默认直接 FEA；旧代理权重在与修正后的标签验证兼容前不参与筛选。
 
 ## 当前边界
 
