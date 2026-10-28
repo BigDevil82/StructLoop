@@ -374,3 +374,66 @@ Phase 4 的基础工程验收路径已打通：实际反馈后继续优化、获
 下一最小任务：冻结当前代码和双布局候选池，确定正式 pilot 的预算/停止条件，做同版本固定/规则/LLM 对照；
 同时诊断反复出现的墙/梁抗剪不通过，先核对上游输出及工程口径，不擅自改变约束限值。
 工程条件仍仅获准冒烟；磁盘恢复、工程审批界面、DWG/成果输出继续留在后续阶段。
+
+## 2026-10-28：构件级 FEA 诊断与抗剪失败定位
+
+### 本轮最小任务与变更
+
+在冻结正式 pilot 前，先核查反复出现的墙/梁抗剪不通过。新增可选的构件诊断路径：
+`adapters/fea_diagnostics.py` 复用原生构建/分析/校核/配筋组件；`fea_summary.py` 保持原汇总逻辑，
+`fea_member_evidence.py` 映射构件与实际组合内力；新增严格 `MemberDiagnostic`、报告服务及 `diagnostics_cli.py`。
+`OpenSeesAdapter` 增加可选诊断目录，默认路径不变；未修改 `_vendor`、权重、限值、几何或历史结果。
+未增加依赖、训练或调用 LLM API。
+
+### 真实复算与失败保留
+
+两个既有布局均使用上一轮相同参数复算，原布局和已批准的对称化布局各完成一次有效诊断。
+成功目录为 `outputs/member_diagnostics_baseline_02/` 和 `outputs/member_diagnostics_symmetry_02/`。
+每次经 `AnalysisService` 记 1 次真实 FEA；全部 35 个原汇总字段在原回归容差内通过，
+两者仍是求解成功、结构不可行，不改变既有可行性结论。
+
+此前各有一次采集失败，保留在 `member_diagnostics_baseline_01/`、`member_diagnostics_symmetry_01/`。
+原因是新采集器假定控制组合非空，未处理上游全负剪力经零截断后保留空组合的情况。
+原生分析/配筋已返回，随后采集抛出 `KeyError('')`；这两条早期记录状态为 SOLVER_ERROR，未改写。
+修复后保留空组合、原零包络及全部有符号剪力；未来诊断采集异常归为 INVALID_RESULT，
+保留原异常链，避免把后处理失败误报成结构不通过或求解器故障。
+本轮实际新增 4 次 FEA（2 次采集失败 + 2 次成功复算），全部记账，未隐藏失败开销。
+核验工件：`outputs/member_diagnostics_verification_01/verification.json`，该核验自身不新增求解。
+
+真实命令见 `docs/member_diagnostics.md`；成功输出分别包含 `report.md`、`summary.json`、
+`comparison.json` 和详细构件、配筋消息、实际模型配置。坐标/尺寸 m、力 N、强度 Pa。
+
+### 关键发现
+
+- 原布局含 15 条约 1 mm 墙段。控制墙 `shearwalls_138` 首层剪力约 14.291 kN，
+  上游分母约 2860 N，剪压指标 4.996789、限值 0.15、利用率约 33.312。
+  355 个墙剪压失败中，341 个来自 1 mm 墙，14 个来自 0.25 m 墙。
+- 墙配筋只对长度 >0.5 m 执行，ULS 则检查全部墙段；355 个失败都位于未执行配筋的短墙范围。
+  因而 `design_failed_wall_count=0` 不能理解为全部墙段完成且通过设计。
+- 对称化布局无 1 mm 墙，原 ULS 墙剪压检查通过；控制梁 `beams_49` 第 3 层长 0.35 m，
+  300×400 mm 截面，剪力约 604.838 kN，利用率约 2.350，配筋消息为截面抗剪不足。
+- 上游有符号静力内力与无符号组合/包络假设不一致：组合因子用 abs，+/- 组合结果相同；
+  有符号剪力最大值截为非负，可将全负效应归零。对称化墙 `shearwalls_92` 第 28 层的
+  组合绝对剪力最大约 113.557 kN，原包络为零。诊断保留该值，没有代换校核或重标注历史数据。
+
+完整差异、数量、来源及待确认的最小修正边界见 `docs/member_diagnostics.md`，已同步上游契约和 README。
+
+### 验证命令与输出
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_fea_diagnostics.py tests/integration/test_member_diagnostics.py --run-real
+# 11 passed in 0.93s：9 项合成单元测试 + 2 项真实工件核验（不新增 FEA）
+.venv/Scripts/python.exe -m pytest -q
+# 66 passed, 16 skipped, 1 warning in 8.88s
+```
+
+16 skipped 为原 14 项加两项需要本地真实诊断工件的显式核验；这两项已单独启用并通过。
+单元测试覆盖原生汇总逐字段对照、空集合/周期比回退/并列利用率选择、短墙检查范围、
+有符号零包络保留、证据单位一致性及采集异常分类/预算。唯一 warning 仍是 PyG 弃用提示。
+
+### 下一最小任务
+
+先确认并修正力效应符号、正负组合与包络契约，再追踪极短墙段的拓扑生成。
+这些变化会影响 FEA 指标、可行性标签和 CASINO 权重适用性，按 AGENTS.md 第 7 条需人工确认；
+须显式版本化分析协议与缓存绑定，保留旧路径和旧结果。新几何仍按版本供工程师检查。
+由于本轮定位到上述真实问题，正式三策略对照配置/运行暂不扩大；修正并复验后再冻结 pilot。

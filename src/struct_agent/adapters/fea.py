@@ -49,9 +49,12 @@ class OpenSeesAdapter:
     """Serial process use only: OpenSees owns process-global native state."""
     fidelity = "full"
 
-    def __init__(self, *, log_directory: Path) -> None:
+    def __init__(self, *, log_directory: Path, diagnostics_directory: Path | None = None) -> None:
         log_directory.mkdir(parents=True,exist_ok=False)
         self.log_directory = log_directory
+        if diagnostics_directory is not None:
+            diagnostics_directory.mkdir(parents=True, exist_ok=False)
+        self.diagnostics_directory = diagnostics_directory
 
     def evaluate(self, layout: LayoutCandidate, design: DesignCandidate,
                  spec: ProjectSpec, *, evaluation_id: str) -> AnalysisRecord:
@@ -74,7 +77,12 @@ class OpenSeesAdapter:
             cfg = DatasetGenerationConfig(builder_name="mvlem_frame", input_unit_scale_to_m=1.,
                 enable_auto_scale=False, seed=0, scale_seed=0)
             status = "SOLVER_ERROR"
-            result = analyze_parametric_model(topology, params, cfg)
+            if self.diagnostics_directory is None:
+                result = analyze_parametric_model(topology, params, cfg)
+            else:
+                from .fea_diagnostics import analyze_detailed
+                result = analyze_detailed(topology, params, cfg, layout=layout,
+                    directory=self.diagnostics_directory / evaluation_id)
             raw = asdict(result)
             status = "INVALID_RESULT"
             required = ("material_concrete_kg", "material_steel_kg", "torsion_ratio", "max_drift_ratio",
@@ -90,6 +98,10 @@ class OpenSeesAdapter:
                 elapsed_s=perf_counter()-started, feasible=bool(result.feasible and result.design_passed),
                 raw=json_safe(raw), error=None,solver_log=str(log_path))
         except Exception as exc:
+            if self.diagnostics_directory is not None:
+                from .fea_diagnostics import DiagnosticEvidenceError
+                if isinstance(exc, DiagnosticEvidenceError):
+                    status = "INVALID_RESULT"
             return AnalysisRecord(evaluation_id=evaluation_id, **context, fidelity="full", status=status,
                 solver="OpenSees/MVLEM_3D", solver_version=str(ops.version()), elapsed_s=perf_counter()-started,
                 feasible=None, raw={}, solver_log=str(log_path),error=ErrorRecord(error_type=type(exc).__name__, message=str(exc),

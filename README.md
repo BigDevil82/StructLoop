@@ -151,6 +151,11 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 用户已批准 `residential_001_symmetry_02` 作为本轮第二候选，批准绑定布局与设计条件哈希，
 不代表正式工程签审。后续真实跨布局结果见 [进度记录](docs/progress.md)。
 
+已补充可选构件级 FEA 诊断，可复算某条真实记录并保留控制构件、组合剪力及配筋消息：
+`.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --help`。
+最新核查发现极短墙段及有符号剪力/包络契约差异，见 [构件诊断记录](docs/member_diagnostics.md)。
+正式对照前需要先确认并复验这些计算口径。
+
 ## 当前边界
 
 - 原工程 `axis_engine` 是 CAD/规则布置模块；真正的 RC-GNN 位于 `Png2Dxf/src/shearwall_pred`。
