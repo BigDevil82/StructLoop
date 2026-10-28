@@ -215,3 +215,69 @@ warnings 为 ezdxf/PyParsing 和 PyG 的弃用提醒。
 先验证分段运行与连续运行一致，再接入真实反馈状态机。
 [TODO: 待确认] 新工程的层数、荷载、设防及规范条件；现有 `reference_spec.json` 仍为冒烟示例。
 本任务只确认建筑图，不自动把旧 28 层/8 度示例条件套作新工程条件。
+
+## 2026-10-28：Phase 3 CASINO 同进程增量会话
+
+### 已完成范围
+
+新增 `adapters/incremental_ga.py`、`adapters/casino_session.py`，修改 `adapters/casino.py` 复用构造过程，
+原 `optimize()` 一次性入口保留为对照。新增 CLI 参数 `--generations-per-step`、`--device`；
+未修改 `_vendor` 算法、权重、原数据，也未训练新的代理模型。
+
+`advance(n)` 在预设总世代上限内推进 n 代，保留种群、独立随机状态、历史、预测缓存与局部校准器。
+每次写不可覆盖的状态快照，保存评价增量和错误。预算耗尽、求解失败或其他执行错误均终止当前会话，
+防止将部分执行过的代重跑；共享评价服务负责跨会话全局预算，新布局新建隔离校准器。
+原 GA 最后一代末尾的额外种群评价和最终代理候选保底复核顺序均保持不变。
+
+### 验证与问题定位
+
+新增 `tests/unit/test_incremental_ga.py` 的 10 项测试：两个种子、有/无代理选择下的原生/连续/分段对照，
+包括已拟合的 Platt/Ridge、逐项历史/结果/随机状态/调用顺序/校准样本一致性，以及最终复核只执行一次、
+部分代预算耗尽不重复执行、非法步数不触发评价。
+
+新增 `tests/integration/test_casino_session.py` 的 4 项测试：使用 residential_001 几何与真实 FuseGNN 权重，
+**有限元响应全部由测试内的合成函数生成并标记 mock**。覆盖实际代理链的三路对照、预算、失败语义、
+布局与校准隔离、共享预算及不可覆盖工件。
+
+首轮集成测试 `1 failed, 3 passed`：原代理自动使用 CUDA，第二代一个候选的钢筋预测相差
+`0.07087933392904233 kg`（对应代理成本差约 0.3544），严格比较失败。没有放宽容差；
+在 Adapter 中显式设置 CPU 为回归默认设备并保留 CUDA 选项后，完整比较通过。
+构造代理模型采用 `torch.random.fork_rng()`，避免覆盖调用方的全局随机状态。
+首次失败工件也保留在 `outputs/casino_continuation_01/gpu_mismatch_initial/`。
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_incremental_ga.py
+# 10 passed in 2.55s（最终目标测试）
+.venv/Scripts/python.exe -m pytest -q tests/integration/test_casino_session.py --run-real
+# 4 passed, 1 warning in 12.90s
+.venv/Scripts/python.exe -m struct_agent.cli optimize --help
+# 包含 --generations-per-step、--device
+.venv/Scripts/python.exe -m pytest -q
+# 34 passed, 11 skipped, 1 warning in 9.44s
+```
+
+11 skipped = 原有 7 项显式真实测试 + 新增 4 项本地权重集成测试；新增 4 项已另行显式执行通过。
+本次没有重跑旧真实 FEA，也没有执行新案例真实 FEA。唯一 warning 为既有 PyG 弃用提示。
+
+### 工件与验证结果
+
+已将完整测试工件从 pytest 临时目录复制到不可覆盖的 `outputs/casino_continuation_01/`，
+逐文件检查复制哈希；摘要见 `verification.json`。
+
+- `equivalence/{native,continuous,chunked}/`：原版 GA、一次推进 3 代、分三次各推进 1 代。
+  三路评价记录、历史、结果和校准记录一致，各 15 次 mock 评价；continuous/chunked 均为 15 条局部样本。
+- 测试专用最小校准样本阈值为 4（正式默认仍为 25），已验证拟合 Platt/Ridge 后的续行。
+  所有这些拟合仅基于合成标签，不表示真实工程校准成功。最终 `fit_pending=true` 表示最后一批新样本
+  尚待原生下次拟合时机；状态快照不为了展示额外触发拟合。
+- `budget_limit/`、`solver_failure/`、`layout_isolation/`：预算/失败/隔离验证记录。
+  隔离测试只做预定义几何扰动，不能视为获批的结构修改。
+
+### 当前整体进度与下一步
+
+Phase 0 工具审计/迁移及 Phase 1 公共契约已具备最小能力；Phase 2 mock 闭环通过。
+Phase 3 已有真实工具适配与增量会话，但新工程的真实反馈二次决策闭环尚未完成。
+下一小步是在确定设计条件后，将本会话接入真实 FEA 和确定性反馈状态机，记录真实评价后的第二次动作。
+Phase 4 再接入 LLM API，用固定/规则策略作对照；Phase 5 完善人工交互和恢复，随后扩展 DWG/报告/图纸。
+
+当前增量会话只支持同进程代际暂停，不支持磁盘恢复、代内暂停或终止后追加世代；
+CLI 逐段自动执行，尚无 Agent 在段间决策。正式工程条件仍待确认，本次不宣称获得工程可行方案。

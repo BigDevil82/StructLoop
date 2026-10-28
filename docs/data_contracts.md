@@ -34,9 +34,27 @@ FEA 原生响应的周期为 s，材料用量 kg，总质量 t，其余公开响
 代理筛掉/排序未选中的项只存在优化历史中，不得计入真实 FEA 样本或可行解。
 `fidelity="mock"` 的测试记录与真实运行分别保存，优化摘要保留同一标识。
 
-每次优化都新建 `(layout, condition)` 实例、图缓存、特征和校准器。
-布局文件名使用完整拓扑摘要，避免用户 ID 冲突/路径穿越；历史继续/恢复为后续任务。
+每个新优化会话都新建 `(layout, condition)` 实例、图缓存、特征和校准器；
+`CasinoSession.advance()` 在同一会话内保留这些对象，禁止将其用于另一布局或设计条件。
+布局文件名使用完整拓扑摘要，避免用户 ID 冲突/路径穿越；从磁盘恢复为后续任务。
 最终工程状态固定为 `engineering_review=PENDING`，没有自动完成工程审批的接口。
+
+## CASINO 增量会话
+
+`CasinoSession(layout, rooms, spec, evaluator, cfg, directory=...)` 固定输入并保存来源哈希、配置及权重哈希。
+`advance(generations=1)` 只接受正整数；每段复用原 GA 操作，保留代际种群、三路独立随机状态、
+候选/结果历史、代理缓存及当前布局的局部校准样本和模型。
+默认代理推理设备为 CPU，配置可显式指定 CUDA；后者不保证逐数值一致。
+
+状态为 `ready/paused/completed/budget_exhausted/analysis_failed/optimizer_failed`。
+后三类中断与正常完成均不可再次推进；部分代已完成评价保存于统一 `analyses/`，不重复调用。
+`completed_generations` 为完整推进的代数；`recorded_generations` 可包含因下一批评价失败而中断的代。
+`fea_attempts` 为本会话产生的调用数，`global_fea_attempts` 为共享服务累计调用数，缓存命中不计费。
+原批量评价全部返回后才更新校准；批中途失败时成功的部分仍保留分析记录，但不会伪造完整校准更新。
+
+`summary()` 不触发额外拟合，`calibration_fit_pending` 表示最新缓冲样本尚待下一个原生拟合时机。
+`steps/advance_*.json` 记录种群、随机状态、历史和校准样本供审计，不能直接反序列化为完整会话。
+每个状态和摘要均保留 `fidelity`，模拟评价产生的校准模型不得转用于真实会话或论文性能结果。
 
 ## 模拟状态机契约
 

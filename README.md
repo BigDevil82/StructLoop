@@ -78,6 +78,34 @@ OpenSees 日志、优化历史和结果。无 Git 时以源码哈希标识代码
 失败求解的 `feasible=null`；代理拒绝不会生成 FEA 记录。
 历史被预算截断时 `history_complete=false`，已经完成的逐次分析仍保留。
 
+### 在同一会话中继续优化
+
+`CasinoSession` 保留同一布局的种群、GA/采样/探索随机状态、历史、预测缓存和局部校准器。
+调用 `session.advance(1)` 推进一代，再次调用继续原会话；总世代上限来自 `CasinoConfig.generations`。
+换布局或设计条件必须创建新会话；共享 `AnalysisService` 可继续使用同一全局 FEA 预算。
+
+CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推进并保存每段记录。
+它目前自动推进到停止条件，尚未让 Agent 在段间决策。默认 `--device cpu` 用于可复现回归；
+可显式选择 `--device cuda`，但 GPU 推理不保证逐数值完全一致。
+不传 `--generations-per-step` 时仍保留原一次性 GA 入口，作为对照。
+
+每段写入 `optimization/steps/advance_*.json`，包括种群、历史、随机状态、校准样本、
+评价增量和错误；结束时写入 `history.json`、`summary.json`。当前仅支持**同进程、代际边界**续行，
+这些 JSON 是审计快照，不是可从磁盘加载的恢复点。部分代因预算/求解异常中断后终止，不能重试该会话。
+
+原 GA 每代末尾仍评价下一批种群（包括最后一代），最终代理候选保底复核只在总世代结束时执行一次。
+增量接口保留该顺序，不能把 `advance(1)` 理解为恰好一次 FEA。
+
+对应验证：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_incremental_ga.py
+.venv/Scripts/python.exe -m pytest -q tests/integration/test_casino_session.py --run-real
+```
+
+后一组使用当前工程图和真实 FuseGNN 权重，但 **FEA 响应为明确标记的合成数据**，
+只验证会话一致性、预算和隔离。它不证明新工程结构可行，也不代表真实局部校准效果。
+
 ## 模拟状态机（Phase 2 最小切片）
 
 先生成一次合成算例（已存在则不覆盖），再运行新的输出目录：
@@ -115,7 +143,7 @@ OpenSees 日志、优化历史和结果。无 Git 时以源码哈希标识代码
 - 默认筛选阈值在迁移生成案例上拒绝了本轮候选；这不证明候选一定不可行。
   `--screening-threshold 0.0` 仅用于另行标记的调用链冒烟验证，不代表 CASINO 效率实验。
 - 实际求解冒烟方案均未通过结构校核。没有宣称获得工程可行解或证明论文研究假设。
-- 已有 mock 状态机、预算和模拟审批门控；真实 CASINO 增量会话、真实反馈决策、LLM、
+- 已有 mock 状态机、预算、模拟审批门控及 CASINO 同进程增量会话；真实 FEA 反馈决策、LLM、
   从磁盘恢复和工程人工审批界面尚未实现。进程内的 mock 审批后可继续运行。
 
 ## Git 与本地数据

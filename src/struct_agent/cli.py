@@ -38,6 +38,10 @@ def main() -> None:
     optimization.add_argument("--budget-fea", type=int, required=True)
     optimization.add_argument("--population", type=int, default=24)
     optimization.add_argument("--generations", type=int, default=20)
+    optimization.add_argument("--generations-per-step", type=int,
+                              help="Use an in-process CASINO session, pausing after each generation chunk")
+    optimization.add_argument("--device", choices=("cpu", "cuda"), default="cpu",
+                              help="CASINO surrogate inference device; CPU is the regression default")
     optimization.add_argument("--screening-threshold", type=float, default=None)
     mock = sub.add_parser("run-case", help="Synthetic state-machine verification only; no real FEA")
     mock.add_argument("--case", type=Path, required=True)
@@ -52,6 +56,8 @@ def main() -> None:
         cmd.add_argument("--run", type=Path, required=True)
         cmd.add_argument("--seed", type=int, required=True)
     args = parser.parse_args()
+    if args.command == "optimize" and args.generations_per_step is not None and args.generations_per_step < 1:
+        parser.error("--generations-per-step must be positive")
     if args.command == "run-case":
         from struct_agent.workflows.runner import run_mock_case
         state = run_mock_case(args.case, args.run, seed=args.seed, budget=args.budget_fea,
@@ -97,13 +103,20 @@ def main() -> None:
         layout = LayoutCandidate.model_validate_json(args.layout.read_text(encoding="utf-8"))
         cfg = CasinoConfig(feasibility_weights=assets["feasibility"], steel_weights=assets["steel"],
             seed=args.seed,population_size=args.population,generations=args.generations,
-            screening_threshold=args.screening_threshold)
+            screening_threshold=args.screening_threshold,device=args.device)
         inputs = {"spec":args.spec,"rooms":args.rooms,"layout":args.layout,
                   "feasibility":assets["feasibility"],"steel":assets["steel"]}
-        create_run(args.run,seed=args.seed,inputs=inputs,config={**cfg.model_dump(mode="json"),"budget":args.budget_fea})
+        create_run(args.run,seed=args.seed,inputs=inputs,config={**cfg.model_dump(mode="json"),"budget":args.budget_fea,
+            "generations_per_step": args.generations_per_step})
         evaluator = AnalysisService(OpenSeesAdapter(log_directory=args.run/"solver_logs"),
             budget=args.budget_fea,directory=args.run/"analyses")
-        summary = optimize(layout,rooms,spec,evaluator,cfg,directory=args.run/"optimization")
+        if args.generations_per_step is None:
+            summary = optimize(layout,rooms,spec,evaluator,cfg,directory=args.run/"optimization")
+        else:
+            from struct_agent.adapters.casino_session import CasinoSession
+            session = CasinoSession(layout,rooms,spec,evaluator,cfg,directory=args.run/"optimization")
+            while session.status in ("ready", "paused"):
+                summary = session.advance(args.generations_per_step)
         print(json.dumps(summary,ensure_ascii=False,default=str))
 
 

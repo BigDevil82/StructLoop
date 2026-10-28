@@ -5,7 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 import random
-from typing import Any
+from typing import Any, Literal
+from struct_agent._vendor.shearwall_optimization.algorithms.genetic import GeneticAlgorithmOptimizer
 
 from pydantic import Field
 
@@ -24,6 +25,7 @@ class CasinoConfig(Contract):
     feasibility_weights: Path
     steel_weights: Path
     seed: int
+    device: Literal["cpu", "cuda"] = "cpu"
     population_size: int = Field(default=24, ge=2)
     generations: int = Field(default=20, ge=1)
     eval_ratio: float = Field(default=0.4, gt=0., le=1.)
@@ -94,9 +96,9 @@ class CasinoProblem(OptimizationProblem):
                             for v,a in zip(self.variables,vec)})
 
 
-def optimize(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpec, evaluator: AnalysisService,
-             cfg: CasinoConfig, *, directory: Path) -> dict[str, Any]:
-    """New instance per (layout, condition); no calibration state is shared."""
+def create_optimizer(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpec, evaluator: AnalysisService,
+                     cfg: CasinoConfig, *, directory: Path) -> GeneticAlgorithmOptimizer:
+    """New bound native optimizer; caller owns its lifetime and continuation."""
     import torch
     from struct_agent._vendor.shearwall_optimization.algorithms.genetic import GeneticAlgorithmConfig, GeneticAlgorithmOptimizer
     from struct_agent._vendor.shearwall_optimization.local_calibration import OnlineLocalCalibrationConfig
@@ -105,7 +107,8 @@ def optimize(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpec, evalu
     for path in (cfg.feasibility_weights, cfg.steel_weights):
         if not path.is_file():
             raise FileNotFoundError(f"BLOCKED: CASINO weights missing: {path}")
-    torch.manual_seed(cfg.seed)
+    if cfg.device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("BLOCKED: explicitly requested CUDA is unavailable")
     directory.mkdir(parents=True, exist_ok=False)
     context = directory / "context"
     layout_path = prepare_context(layout, rooms, context)
@@ -120,7 +123,23 @@ def optimize(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpec, evalu
             eval_ratio=cfg.eval_ratio, min_eval_count=cfg.min_eval_count),
         local_calibration=OnlineLocalCalibrationConfig(enabled=True, min_samples=cfg.calibration_min_samples,
             steel_min_samples=cfg.calibration_min_samples))
-    optimizer = GeneticAlgorithmOptimizer(problem,settings)
+    # Weight construction must not overwrite the caller's process-global RNG states.
+    with torch.random.fork_rng():
+        torch.manual_seed(cfg.seed)
+        optimizer = GeneticAlgorithmOptimizer(problem,settings)
+        # Upstream constructors auto-select CUDA. Make execution device explicit
+        # at the adapter boundary; CPU is the reproducible regression default.
+        for predictor in (optimizer.evaluator.screener, optimizer.evaluator.cost_estimator):
+            predictor.device = torch.device(cfg.device)
+            predictor.model.to(predictor.device)
+    return optimizer
+
+
+def optimize(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpec, evaluator: AnalysisService,
+             cfg: CasinoConfig, *, directory: Path) -> dict[str, Any]:
+    """Original one-shot path retained as a numeric regression reference."""
+    optimizer = create_optimizer(layout, rooms, spec, evaluator, cfg, directory=directory)
+    problem = optimizer.problem
     reason, history = "completed", []
     try:
         result = optimizer.optimize()
