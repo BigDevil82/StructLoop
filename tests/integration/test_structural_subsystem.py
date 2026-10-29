@@ -57,3 +57,34 @@ def test_bending_release_preserves_prescribed_mass_and_has_zero_beam_moments(
     import json
     info = json.loads((tmp_path/'released'/'mesh.json').read_text(encoding='utf-8'))
     assert info['beam_elements'] == 24 and len(info['released_beam_tags']) == 12
+
+
+@pytest.mark.real
+@pytest.mark.parametrize('formulation',['mvlem','shell_dkgq'])
+def test_walls_only_removes_beams_preserves_parent_mass_and_fixes_only_null_dofs(
+        tmp_path: Path, spec: ProjectSpec, design: DesignCandidate, layout: LayoutCandidate,
+        formulation: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+    import openseespy.opensees as ops
+    from struct_agent.adapters.etabs.residential_input import prepare
+    from struct_agent.schemas import Member
+    members = (*layout.members,Member(member_id='perpendicular',start=(0.,0.),end=(0.,3.),role='wall'),
+        Member(member_id='auxiliary_beam',start=(4.,0.),end=(4.,2.),role='primary'))
+    request = ResidentialSpec(project=spec.model_copy(update={'stories':12}),
+        layout=layout.model_copy(update={'members':members}),design=design)
+    fixed = []
+    native_fix = ops.fix
+    def recording_fix(tag: int, *dofs: int) -> None:
+        fixed.append((tuple(ops.nodeCoord(tag)),dofs))
+        native_fix(tag,*dofs)
+    monkeypatch.setattr(ops,'fix',recording_fix)
+    result = run_reference(request,tmp_path/'walls',mesh=ReferenceMesh(
+        wall_formulation=formulation,remove_beam_stiffness=True,vertical_subdivisions=2))
+    assert result['verified'] and len(result['periods_s']) == 12
+    assert [r['mass_kg'] for r in result['floor_inputs']] == pytest.approx([f.mass_kg for f in prepare(request).floors])
+    info = json.loads((tmp_path/'walls'/'mesh.json').read_text(encoding='utf-8'))
+    assert info['beam_elements'] == 0 and len(info['removed_beam_tags']) == 12
+    assert len(info['auxiliary_null_dof_nodes']) == 12
+    assert info['wall_elements'] == 48
+    assert len(fixed[-12:]) == 12
+    assert all(coord[:2] == (4.,2.) and dofs == (0,0,1,1,1,0) for coord,dofs in fixed[-12:])

@@ -108,6 +108,9 @@ class ConnectionAuditSpec(Contract):
     kind: Literal['connection_audit'] = 'connection_audit'
     model: Path
     model_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    frame_names: tuple[str, ...] | None = Field(default=None,min_length=1,max_length=1000)
+    detailed_axes: bool = False
+    read_generated_lines: bool = False
 
     @model_validator(mode='after')
     def edb_only(self) -> ConnectionAuditSpec:
@@ -137,14 +140,21 @@ class ConnectionStudySpec(Contract):
         return self
 
 
+class ModelFormReviewSpec(Contract):
+    """Final parameter audit and walls-only stiffness counterfactual."""
+    kind: Literal['model_form_review'] = 'model_form_review'
+    residential: ResidentialSpec
+    audit: ConnectionAuditSpec
+
+
 class ETABSRequest(Contract):
     config: ETABSConfig
-    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec = Field(discriminator='kind')
+    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec | ModelFormReviewSpec = Field(discriminator='kind')
 
     @model_validator(mode='after')
     def theory_scope(self) -> ETABSRequest:
-        if isinstance(self.spec,ConnectionStudySpec) and self.config.beam_theory != 'euler_comparison':
+        if isinstance(self.spec,(ConnectionStudySpec,ModelFormReviewSpec)) and self.config.beam_theory != 'euler_comparison':
             raise ValueError('Connection study fixes Euler beams')
-        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec,ConnectionStudySpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
+        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec,ConnectionStudySpec,ModelFormReviewSpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
             raise ValueError('Beam/mesh comparison options are supported only for the residential diagnostic')
         return self

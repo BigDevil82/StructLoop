@@ -2,6 +2,7 @@
 
 更新：2026-10-29。当前处于Phase 4：已有Agent决策与真实调用闭环，先解决结构分析可靠性，再推进有效优化实验。
 最新用户规则：跨软件同条件差异小于5%即通过，停止核查校准；相关任务合并批量推进，已进入结构层面比对。
+后续授权允许接受有受控证据的单元近似差异。本批已完成最终建模核对并记录当前弹性范围的已知偏差；不改写原超限状态。
 本文件只保留现状和最近任务。早期逐轮日志见 `git show ef2c915:docs/progress.md`；代码及文档历史由Git保留。
 默认案例和工程条件是不同的确认事项：建筑固定为residential_001；现有条件仅获准冒烟，12层用于当前软件对照。
 
@@ -39,11 +40,54 @@
 | ETABS，近似抑制梁剪切 | 2.374560 | 4.061073 | 5.124680 |
 | OpenSees，Euler梁 | 2.447730 | 3.684367 | 4.357638 |
 
-2→4片仍变化26.2%/18.3%，整栋尚未收敛。原网格重建等价、纤维单独加密和小构件解析检查通过，仍未定位整栋原因。
+2→4片仍变化26.2%/18.3%，整栋尚未收敛。原网格重建等价、纤维单独加密和小构件解析检查通过；
+最新受控对照已分离出单元近似及梁墙耦合通道，尚不能将这两软件自身的网格变化声明为已收敛。
 完整负面发现、控制组和两端原始结果均保留，见 `x_displacement_checks.md` 与 `outputs/reports/x_displacement/report.md`。
 不得把细网格某次结果指定为真值或直接写入GA/代理标签。
 
-## 本批任务：实际端区与梁墙弯矩通道
+## 本批任务：最终建模核对与已知偏差收口
+
+起点5afba18，工作区干净。Phase 4，沿用residential_001及获准12层诊断条件。
+
+- 新增 `axis_review.py`、`model_form_review.py`，扩展受控ETABS请求/worker及双端纯墙诊断选项；
+  新增类型/张量轴测试及两种真实墙单元的移除梁刚度、质量保持、空自由度约束测试。
+- 读取实际材料E/G/nu、墙厚与修正系数一致。最初81根源梁、随后原归档整栋972根梁全局惯性张量一致，
+  最大相对差6.66e-16；没有强弱轴颠倒。原整栋实际分析端区、RZ及插入偏移全部为0，无梁弯曲释放。
+- 最后一个反事实移除972根梁刚度，保留原楼层质量/惯量/中心/加载点。仅消除96个无墙连接辅助节点的
+  UZ/RX/RY空自由度，独立几何检查确认这些点不在墙上；没有对墙节点增加支承。
+- 每层4片纯墙ShellDKGQ与ETABS ShellThin的132项全部小于5%，最大差0.8125%，关闭该对照。
+  纯墙MVLEM屋顶X/Y差4.49%/3.82%，首层仍差13.55%/12.82%，12阶周期最大差13.47%；
+  99/132项通过，原121个超限同名项有99个进入5%，未用探针结果改写生产状态。
+- 与原带梁模型、此前梁端释放结果共同支持两个通道：MVLEM积分/运动学近似，以及梁墙转角兼容/连接耦合。
+  本轮未发现新的明确设置bug；按用户授权，以**当前12层线弹性范围的已知模型偏差**收口，停止一致性校准。
+  不声称差异已证明不可避免，原所有超限、网格敏感性、重力/谱/组合/设计缺项仍保留。
+- 原EDB打开后直接GetElm返回码1，失败查询完整保留。修正诊断入口，在副本生成分析图后读回实际端区，
+  不RunAnalysis、不Save；第二轮成功，原EDB/缓存和副本EDB均未改写。
+  首次主入口因严格Schema误用Python解析JSON列表在建运行前失败，改用JSON解析后完成真实对照。
+- 工件 `outputs/current/model_form_review_01/`；原模型来源 `model_form_original_01/`、
+  查询失败 `model_form_original_audit_01/` 与成功 `_02/` 均保留。
+  最终报告 `outputs/reports/model_form_disposition_01/`，说明 `docs/model_form_review.md`，
+  26项证据索引 `configs/model_form_review_evidence.json`。
+- AGENTS/PLAN/ROADMAP、README及输出管理同步范围。生产物理指纹仍e49011b…，源图、参数、权重和正式优化门槛不变；
+  未迁移上游、训练、调用LLM/GA或重试YJK。
+
+验证命令：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_model_form_review.py tests/unit/test_connection_audit.py tests/unit/test_connection_study.py tests/unit/test_exceedance_causes.py tests/integration/test_structural_subsystem.py --run-real
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.model_form_review --run outputs/current/model_form_review_01 --report outputs/reports/model_form_review_01
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.connection_audit --model outputs/current/model_form_original_01/model.EDB --run outputs/current/model_form_original_audit_02 --read-generated-lines --detailed-axes
+.venv/Scripts/python.exe -m pytest -q
+git diff --check
+```
+
+最终目标20 passed（1.51s）；默认165 passed、34 skipped、1个既有PyG弃用提示（8.94s）。
+真实纯墙ETABS123.70s，OpenSees MVLEM64.86s、Shell52.71s；所有求解状态/稳定性/平衡检查通过。
+旧连接索引15项及新索引26项SHA256复验通过；两个有效ETABS执行快照各自文件哈希核验通过。
+补强副本生成分析图之后的文件完整性检查，并用单元测试确认意外改写会被拒绝；
+真实成功查询另在应用退出后独立复验源EDB、副本EDB及源缓存，全部未改写，证据为post_query_integrity.json。
+
+## 上一批：实际端区与梁墙弯矩通道（5afba18）
 
 起点6504892，工作区干净。保持residential_001和获准12层条件，原通过项不重开。
 
@@ -193,9 +237,9 @@ ETABS正式复跑176.47s，状态SUCCESS仅指工况及响应检查，不是跨�
 
 ## 后续批次
 
-保持梁间节点支承，分离剩余24条梁的墙端转角和墙体内部接点运动学，继续定位整栋细网格超限。
-不再重复已证实为零的墙梁组合端区，不直接用中点或换壳反事实替换生产方案。
+当前弹性跨软件一致性诊断按已知单元/连接差异收口；不再重复端区、材料、积分位置或释放系数校准。
+不直接用中点、无梁或换壳反事实替换生产方案；整栋网格敏感性保留为独立可靠性门槛。
 已通过单墙、子系统周期及主响应不再核查校准；不再进行单墙水平离散/泊松补查。
-之后补重力/地震谱/组合和规范配筋独立复核。
+下一批优先补重力荷载传递，再对地震谱/组合及规范配筋作独立复核。
 分析基础与几何受理问题解决后，才进入正式优化、代理兼容性验证及等预算策略比较。
 人工审批界面、磁盘恢复、DWG和工程成果输出仍属于后续阶段。

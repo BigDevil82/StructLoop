@@ -29,6 +29,8 @@ outputs/
 | 梁墙壳替换补充及ETABS只读连接设置 | `outputs/{current,reports}/exceedance_wall_beam_shell_01/`、`outputs/current/connection_audit_{01,02}/` |
 | 实际端区与梁墙弯矩通道汇总 | `outputs/reports/connection_diagnosis_01/`，索引 `configs/connection_diagnosis_evidence.json` |
 | 墙梁/整栋连接探针 | `outputs/current/beam_wall_connection_01/`、`whole_connection_02/`；无效 `whole_connection_01/`完整保留且排除比较 |
+| 最终纯墙配对与已知偏差处置 | `outputs/current/model_form_review_01/`；`outputs/reports/model_form_disposition_01/`，索引 `configs/model_form_review_evidence.json` |
+| 原整栋实际端区/梁轴只读补查 | 来源 `outputs/current/model_form_original_01/`；有效 `model_form_original_audit_02/`，失败 `_01`保留；未重新求解 |
 | 全部38个已完成运行 | `outputs/archive/evidence_20261029.zip`，原始目录名保持不变 |
 
 归档整理时建立的当前输入、回归文件和原两份报告是逐字节副本，不是重新求解结果。

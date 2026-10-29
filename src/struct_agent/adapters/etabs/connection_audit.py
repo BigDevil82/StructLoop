@@ -1,4 +1,4 @@
-"""Fixed read-only API queries; no attach, analysis, save or source mutation."""
+"""Fixed copied-model queries; no attach, solver run, save or source mutation."""
 from __future__ import annotations
 
 import argparse
@@ -57,7 +57,12 @@ def inspect_connections(client: ETABSClient, spec: ConnectionAuditSpec, director
     count, names = call('ConnectionFrameNames',m.FrameObj.GetNameList)
     if count <= 0 or count != len(names):
         raise ValueError('No diagnostic frames to inspect')
+    if spec.frame_names is not None:
+        if len(set(spec.frame_names)) != len(spec.frame_names) or not set(spec.frame_names).issubset(names):
+            raise ValueError('Unknown or duplicate requested frame names')
+        names = list(spec.frame_names)
     frames = {}
+    sections = {}
     for name in names:
         points = call('ConnectionEndPoints',m.FrameObj.GetPoints,name)
         frames[name] = {
@@ -68,12 +73,27 @@ def inspect_connections(client: ETABSClient, spec: ConnectionAuditSpec, director
             'end_offsets':call('ConnectionOffsets',m.FrameObj.GetEndLengthOffset,name),
             'end_releases':call('ConnectionReleases',m.FrameObj.GetReleases,name),
             'section':call('ConnectionSection',m.FrameObj.GetSection,name)}
+        if spec.detailed_axes:
+            matrix = call('ConnectionGlobalTransformation',m.FrameObj.GetTransformationMatrix,name)[0]
+            if len(matrix) != 9 or not all(math.isfinite(v) for v in matrix):
+                raise ValueError('Invalid frame transformation matrix')
+            frames[name]['transformation'] = matrix
+            prop = frames[name]['section'][0]
+            if prop not in sections:
+                sections[prop] = call('ConnectionSectionProperties',m.PropFrame.GetSectProps,prop)
     result = {'purpose':'READ_ONLY_CONNECTION_AUDIT','verified':True,'units':'N_m_kg_s',
-        'frames':frames,'source_unchanged':sha256(spec.model) == spec.model_sha256,
-        'copy_unchanged':sha256(copy) == spec.model_sha256,
+        'frames':frames,'total_frame_objects':count,'section_properties':sections,
         'source_cache_hashes':caches,
-        'source_caches_unchanged':all(sha256(Path(path)) == digest for path,digest in caches.items()),
         'analysis_called':False,'save_called':False,'engineering_feasibility':'NOT_EVALUATED'}
+    if spec.read_generated_lines:
+        # Opening an EDB does not populate FrameObj.GetElm in this ETABS
+        # version. Generate the copy's analysis graph, without RunAnalysis.
+        call('CreateCopiedAnalysisModel',m.Analyze.CreateAnalysisModel)
+        result['analysis_model_generated_on_copy'] = True
+        result['generated_lines'] = analysis_line_connections(client,names)
+    result.update(source_unchanged=sha256(spec.model) == spec.model_sha256,
+        copy_unchanged=sha256(copy) == spec.model_sha256,
+        source_caches_unchanged=all(sha256(Path(path)) == digest for path,digest in caches.items()))
     if not result['source_unchanged'] or not result['copy_unchanged'] or not result['source_caches_unchanged']:
         raise ValueError('Read-only inspection changed a model file')
     write_json(directory/'connections.json',result)
@@ -84,9 +104,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model',type=Path,required=True)
     parser.add_argument('--run',type=Path,required=True)
+    parser.add_argument('--read-generated-lines',action='store_true')
+    parser.add_argument('--detailed-axes',action='store_true')
     args = parser.parse_args()
     model = args.model.resolve()
-    result = run_verification(ConnectionAuditSpec(model=model,model_sha256=sha256(model)),
+    result = run_verification(ConnectionAuditSpec(model=model,model_sha256=sha256(model),
+        read_generated_lines=args.read_generated_lines,detailed_axes=args.detailed_axes),
         args.run,ETABSConfig(timeout_s=180.))
     print(result['status'])
     if result['status'] != 'SUCCESS':

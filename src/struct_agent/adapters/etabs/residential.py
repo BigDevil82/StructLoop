@@ -25,14 +25,14 @@ def beam_modifiers(theory: Literal['timoshenko','euler_comparison']) -> list[flo
 def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Path, *,
                       beam_theory: Literal['timoshenko','euler_comparison']='timoshenko',
                       wall_vertical_subdivisions: int=1,
-                      connection_mode: Literal['default','zero_offsets','pinned_bending'] | None=None,
+                      connection_mode: Literal['default','zero_offsets','pinned_bending','walls_only'] | None=None,
                       release_scope: Literal['all','wall_to_wall']='all') -> dict[str,Any]:
     from struct_agent.adapters.fea import native_topology
     from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers
     data = prepare(spec)
     if not 1<=wall_vertical_subdivisions<=4:
         raise ValueError('Bounded wall subdivision count required')
-    if connection_mode not in (None,'default','zero_offsets','pinned_bending'):
+    if connection_mode not in (None,'default','zero_offsets','pinned_bending','walls_only'):
         raise ValueError('Unknown diagnostic beam connection mode')
     m, call, v = client.model, client.call, spec.design.values
     call('InitializeNewModel',m.InitializeNewModel,10)
@@ -56,6 +56,20 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
         call('WallSection '+prop,m.PropArea.SetWall,prop,1,1,'COMMON_ELASTIC',thickness)
         # Match MVLEM_3D's documented 0.63 out-of-plane thickness multiplier.
         call('WallModifiers '+prop,m.PropArea.SetModifiers,prop,[1.,1.,1.,.63**3,.63**3,.63**3,1.,1.,1.,1.])
+    if connection_mode == 'walls_only':
+        material = call('ReadElasticMaterial',m.PropMaterial.GetMPIsotropic,'COMMON_ELASTIC')
+        walls = {}
+        for thickness in sorted({f.wall_thickness_m for f in data.floors}):
+            prop = f'W{round(thickness*1000)}'
+            definition = call('ReadWallDefinition',m.PropArea.GetWall,prop)
+            values = call('ReadWallModifiers',m.PropArea.GetModifiers,prop)[0]
+            if tuple(definition[:4]) != (1,1,'COMMON_ELASTIC',thickness) or list(values) != [1.,1.,1.,.63**3,.63**3,.63**3,1.,1.,1.,1.]:
+                raise ValueError('Wall stiffness readback mismatch')
+            walls[prop] = {'definition':definition,'modifiers':values}
+        expected = (data.elastic_modulus_pa,data.poisson,0.,data.elastic_modulus_pa/(2*(1+data.poisson)))
+        if len(material) != 4 or not all(math.isclose(a,b,rel_tol=1e-9,abs_tol=1e-8) for a,b in zip(material,expected)):
+            raise ValueError('Material stiffness readback mismatch')
+        write_json(directory/'stiffness_readback.json',{'material_E_nu_alpha_G':material,'walls':walls,'verified':True})
     piers = wall_piers(native_topology(data.layout).walls)
     source_to_pier = {index:f'P{pier.pier_id}' for pier in piers for index in pier.source_ids}
     existing = set(call('ExistingPiers',m.PierLabel.GetNameList)[1])
@@ -73,6 +87,8 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
             nodes[level,point] = name
             if level==0:
                 call('BaseFix',m.PointObj.SetRestraint,name,[True]*6)
+            elif connection_mode == 'walls_only' and point not in wall_points:
+                call('AuxiliaryNullDofs',m.PointObj.SetRestraint,name,[False,False,True,True,True,False])
     for story in range(1,n+1):
         for step in range(1,wall_vertical_subdivisions):
             level = story-1+step/wall_vertical_subdivisions
@@ -104,6 +120,8 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
                     mapping.append({'story':story,'source_id':member.member_id,'role':member.role,
                         'etabs_object':name,'mesh_piece':part})
             else:
+                if connection_mode == 'walls_only':
+                    continue
                 name, = call('AddBeam',m.FrameObj.AddByPoint,a,b,'',member.role)
                 if connection_mode is not None:
                     release_this = connection_mode == 'pinned_bending' and (release_scope == 'all'
@@ -134,7 +152,7 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     frame_names = call('ReadFrameNames',m.FrameObj.GetNameList)
     point_names = call('ReadPointNames',m.PointObj.GetNameList)
     count_checks = {'walls':area_names[0]==n*wall_vertical_subdivisions*sum(member.role=='wall' for member in data.layout.members),
-        'beams':frame_names[0]==n*sum(member.role!='wall' for member in data.layout.members),
+        'beams':frame_names[0]==(0 if connection_mode == 'walls_only' else n*sum(member.role!='wall' for member in data.layout.members)),
         'points':point_names[0]==len(nodes)+len(masters)}
     coordinate_error = 0.
     for (level,point),name in nodes.items():
@@ -150,6 +168,9 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     write_json(directory/'model_mapping.json',{'origin_xy_m':data.origin_xy_m,'centre_xy_m':data.centre_xy_m,
         'source_members':len(data.layout.members),'objects':mapping,'masters':masters,'mass_kg':actual_mass,
         'mass_source':mass_source,'slab_stiffness':'rigid diaphragm only, matching MVLEM protocol',
+        'removed_beam_stiffness':connection_mode == 'walls_only',
+        'auxiliary_null_dof_nodes':[name for (level,point),name in nodes.items()
+            if connection_mode == 'walls_only' and level>=1 and float(level).is_integer() and point not in wall_points],
         'preflight':'Unrepaired short members retained for diagnostic only; no engineering feasibility verdict'})
     for direction in ('X','Y'):
         case = 'ROOF_'+direction
@@ -174,7 +195,7 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     write_json(directory/'solver_health.json',health)
     if not health['verified']:
         raise RuntimeError(f'Unsafe native solver stability result: {health}')
-    if connection_mode is not None:
+    if connection_mode is not None and connection_mode != 'walls_only':
         from .connection_audit import analysis_line_connections
         connections = {'assignments':connections, 'resolved':analysis_line_connections(client,list(connections))}
         write_json(directory/'analysis_connections.json',connections)

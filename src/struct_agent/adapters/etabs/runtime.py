@@ -10,10 +10,10 @@ import time
 from typing import Any
 
 from struct_agent.io.artifacts import create_run, write_json, sha256
-from .contracts import CantileverSpec, ResidentialSpec, SingleWallSpec, StructuralBatchSpec, ConnectionAuditSpec, ConnectionStudySpec, ETABSConfig
+from .contracts import CantileverSpec, ResidentialSpec, SingleWallSpec, StructuralBatchSpec, ConnectionAuditSpec, ConnectionStudySpec, ModelFormReviewSpec, ETABSConfig
 
 
-def run_verification(spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec, directory: Path, config: ETABSConfig) -> dict[str, Any]:
+def run_verification(spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec | ModelFormReviewSpec, directory: Path, config: ETABSConfig) -> dict[str, Any]:
     import psutil
     directory = directory.resolve()
     install = config.install_root.resolve()

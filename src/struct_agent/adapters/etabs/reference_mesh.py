@@ -17,9 +17,12 @@ class ReferenceMesh(Contract):
     plate_poisson: float | None = Field(default=None, ge=0., lt=.5)
     beam_bending_released: bool = False
     beam_release_scope: Literal['all','wall_to_wall'] = 'all'
+    remove_beam_stiffness: bool = False
 
     @model_validator(mode='after')
     def applicable_options(self) -> ReferenceMesh:
+        if self.remove_beam_stiffness and self.beam_bending_released:
+            raise ValueError('Beam removal and bending release are separate counterfactuals')
         if not self.beam_bending_released and self.beam_release_scope != 'all':
             raise ValueError('A beam release scope requires beam_bending_released')
         if self.wall_formulation == 'shell_dkgq' and (self.center_of_rotation != .4
@@ -49,6 +52,19 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
         raise ValueError('Unexpected initial element coverage')
     profiles = config.resolve_story_profiles()
     released_beams = []
+    removed_beams, auxiliary_nodes = [], []
+    if mesh.remove_beam_stiffness:
+        removed_beams = sorted(beams)
+        for tag in removed_beams:
+            ops.remove('element',tag)
+        beams = set()
+        wall_nodes = {p for unit in units for p in (*unit.bottom_nodes,*unit.top_nodes)}
+        # These nodes retain only the horizontal diaphragm constraint. Eliminate
+        # their now-unused UZ/RX/RY; never restrain a wall node or UX/UY/RZ.
+        floor_nodes = {p for tags in build.floor_story_nodes for p in tags}
+        auxiliary_nodes = sorted(floor_nodes-wall_nodes)
+        for tag in auxiliary_nodes:
+            ops.fix(tag,0,0,1,1,1,0)
     if mesh.beam_bending_released:
         from struct_agent._vendor.shearwall_modeling.builders.mvlem_frame import _beam_section_props
         if not build.beam_element_units:
@@ -143,4 +159,5 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
     return {'options':mesh.model_dump(),'wall_elements':len(units)*mesh.vertical_subdivisions,
         'beam_elements':len(beams),'node_count':len(ops.getNodeTags()),'wall_mapping':mapping,
         'released_beam_tags':released_beams,
+        'removed_beam_tags':removed_beams,'auxiliary_null_dof_nodes':auxiliary_nodes,
         'added_floor_masses':0,'added_floor_beams':0,'added_diaphragms':0,'member_design_extraction_supported':False}

@@ -75,3 +75,38 @@ def test_resolved_analysis_offsets_do_not_use_automatic_object_placeholders() ->
     result = analysis_line_connections(client,['B1'])
     assert not result['all_resolved_end_lengths_zero']
     assert result['frames']['B1'][0]['end_length_offsets_m_and_rz'][0] == .25
+
+
+def test_read_only_audit_can_select_frames_and_read_preexisting_analysis_elements(tmp_path: Path) -> None:
+    source = tmp_path/'source.EDB'
+    source.write_bytes(b'synthetic')
+    directory = tmp_path/'audit'
+    directory.mkdir()
+    client = ReadOnlyClient()
+    original_call = client.call
+    client.model.Analyze = SimpleNamespace(CreateAnalysisModel=None)
+    client.model.FrameObj.GetElm = None
+    client.model.LineElm = SimpleNamespace(GetEndLengthOffset=None,GetInsertionPoint=None)
+    def call(operation: str, method: Any, *args: Any) -> tuple[Any,...]:
+        values = {'ConnectionAnalysisElements':(1,['line1'],[0.],[1.]),
+            'ConnectionResolvedOffsets':(.1,0.,.5),'ConnectionResolvedInsertion':([0.]*3,[0.]*3)}
+        return values[operation] if operation in values else original_call(operation,method,*args)
+    client.call = call
+    result = inspect_connections(client,ConnectionAuditSpec(model=source,model_sha256=sha256(source),
+        frame_names=('B1',),read_generated_lines=True),directory)
+    assert not result['generated_lines']['all_resolved_end_lengths_zero']
+    assert result['analysis_model_generated_on_copy']
+    assert not result['analysis_called'] and not result['save_called']
+    with pytest.raises(ValueError,match='Unknown or duplicate'):
+        inspect_connections(client,ConnectionAuditSpec(model=source,model_sha256=sha256(source),
+            frame_names=('unknown',)),tmp_path)
+    changed = tmp_path/'changed'
+    changed.mkdir()
+    def modifying_call(operation: str, method: Any, *args: Any) -> tuple[Any,...]:
+        if operation == 'CreateCopiedAnalysisModel':
+            (changed/'inspection.EDB').write_bytes(b'unexpected graph-generation model mutation')
+        return call(operation,method,*args)
+    client.call = modifying_call
+    with pytest.raises(ValueError,match='changed a model file'):
+        inspect_connections(client,ConnectionAuditSpec(model=source,model_sha256=sha256(source),
+            read_generated_lines=True),changed)

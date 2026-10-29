@@ -197,7 +197,9 @@ ETABS小模型与12层住宅对照见 [docs/etabs_cross_validation.md](docs/etab
 已完成[超限原因检查](docs/exceedance_causes.md)，量化了MVLEM积分位置对低层响应的影响；
 整栋剩余差异仍需隔离梁墙节点弯矩/转角传递，未将诊断反事实直接替换为生产模型。
 后续[实际端区与连接对照](docs/beam_wall_connections.md)已排除墙梁组合的端区影响，
-修复了ETABS不稳定警告漏判；整栋有效部分释放仍超限，继续处理剩余连接和墙体运动学。
+修复了ETABS不稳定警告漏判。[最终建模核对](docs/model_form_review.md)读取原整栋972根梁的实际零端区与物理轴，
+纯墙ShellThin/ShellDKGQ的132项全部小于5%（最大0.81%），分离出宏单元近似和梁墙耦合通道。
+按用户授权将当前线弹性范围内剩余差异作为已知建模偏差收口；原超限数字与独立网格可靠性问题仍保留，未开放正式优化。
 
 ## Git 与本地数据
 
