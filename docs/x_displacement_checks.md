@@ -61,16 +61,18 @@ ETABS保留剪切变形的原粗模型为X/Y=2.702472/2.714278mm。
 
 ## 工件与复现
 
-汇总报告及带输入哈希的manifest：`outputs/x_displacement_diagnosis_01/`。
+汇总报告及带输入哈希的manifest：`outputs/reports/x_displacement/`。
 原始输出为 `etabs_residential_12_euler_01`、`etabs_residential_12_euler_mesh{2,4}_01`，
 以及 `opensees_residential_12_{rebuild,fibers2,mesh2,mesh4}_01`；
-解析子结构最终运行 `x_displacement_substructures_02`。目录均在outputs下，不覆盖旧结果。
+解析子结构最终运行 `x_displacement_substructures_02`。这些原始目录已整体收入
+`outputs/archive/evidence_20261029.zip`，汇总报告可直接在reports下查看。
+索引与恢复方式见 `output_management.md`；原始manifest及数值未改写。
 
 等价住宅命令（必须换新目录）：
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.etabs_cli residential --layout outputs/residential_001_rcgnn_03/layout.json --spec configs/etabs_12_story_spec.json --design outputs/residential_12_inputs_01/design.json --beam-theory euler_comparison --wall-vertical-subdivisions 2 --reference-wall-subdivisions 2 --reference-fiber-refinement 2 --run outputs/new_etabs_mesh2 --opensees-reference outputs/new_opensees_mesh2 --comparison outputs/new_mesh2_comparison
-.venv/Scripts/python.exe -c "from pathlib import Path; from struct_agent.adapters.etabs.substructures import run_substructures; run_substructures(Path('outputs/new_substructures'))"
+.venv/Scripts/python.exe -m struct_agent.etabs_cli residential --layout outputs/current/residential_001/layout.json --spec configs/etabs_12_story_spec.json --design outputs/current/design_12_story/design.json --beam-theory euler_comparison --wall-vertical-subdivisions 2 --reference-wall-subdivisions 2 --reference-fiber-refinement 2 --run outputs/current/new_etabs_mesh2 --opensees-reference outputs/current/new_opensees_mesh2 --comparison outputs/current/new_mesh2_comparison
+.venv/Scripts/python.exe -c "from pathlib import Path; from struct_agent.adapters.etabs.substructures import run_substructures; run_substructures(Path('outputs/current/new_substructures'))"
 ```
 
 两软件的水平离散、泊松效应、面外行为和连接运动学仍非完全等价。

@@ -42,7 +42,7 @@
 使用已存在的当前生成布局，以及给定初始参数；复跑必须更换输出目录：
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_03/layout.json --rooms outputs/residential_001_rcgnn_03/room_graph.json --spec configs/etabs_12_story_spec.json --initial-design outputs/residential_12_inputs_01/design.json --run outputs/new_feedback_search --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 6 --population 2 --generations 5
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/etabs_12_story_spec.json --initial-design outputs/current/design_12_story/design.json --run outputs/current/new_feedback_search --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 6 --population 2 --generations 5
 .venv/Scripts/python.exe -m pytest -q tests/unit/test_search_feedback.py tests/unit/test_incremental_ga.py tests/unit/test_optimization_env.py
 .venv/Scripts/python.exe -m pytest -q
 .venv/Scripts/python.exe -m pytest -q --run-real

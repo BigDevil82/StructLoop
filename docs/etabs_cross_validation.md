@@ -1,5 +1,9 @@
 # ETABS复核能力审计（2026-10-29）
 
+> 本文保留静态审计及后续实测记录。原运行已归档至 `outputs/archive/evidence_20261029.zip`；
+> `ZIP::<run>/...` 为归档成员引用，恢复及当前报告入口见 `output_management.md`。
+> 后台弹性诊断已实测，重力/配筋及整栋网格收敛尚未验证，初期“未启动”仅指当时静态审计。
+
 本次为Phase 4的替代商业参照能力审计，不是建模、授权、求解或配筋结果验收。
 未启动/附着ETABS、未操作用户模型；未引入依赖或迁移业务模块。
 安装信息、API/文档与上游源码SHA256见 `configs/solver_inventory.json`。
@@ -80,7 +84,7 @@ ETABS提供混凝土框架设计与剪力墙设计/校核。墙设计需要先�
 
 ### 悬臂解析解
 
-`outputs/etabs_cantilever_04` 已经真实启动ETABS 18.1.0 Build 2117并完成计算。
+`outputs/archive/evidence_20261029.zip::etabs_cantilever_04` 已经真实启动ETABS 18.1.0 Build 2117并完成计算。
 3m高、0.4m正方形、E=30GPa、nu=0.2、柱顶质量10000kg，水平力10000N，材料自重置零。
 理论包含5GA/6剪切变形；同一模型的两个水平振型具有相同周期，保留二者，不去重。
 
@@ -100,7 +104,7 @@ ETABS提供混凝土框架设计与剪力墙设计/校核。墙设计需要先�
 
 ### 12层住宅
 
-使用 `outputs/residential_001_rcgnn_03/layout.json` 的162墙段、32主梁、49次梁，12层、层高2.9m。
+使用 `outputs/current/residential_001/layout.json` 的162墙段、32主梁、49次梁，12层、层高2.9m。
 墙厚分区及梁截面使用独立design.json；依现有楼层分区规则为3/5/4层，墙厚200/160/160mm，
 主梁250×500mm，次梁300×400mm，混凝土C30。本次不是参数优化或工程可行解。
 原极短墙/梁保留为诊断对象，完整记录；仍受真实GA前处理门槛约束，不允许以本次完成计算越过该门槛。
@@ -116,7 +120,7 @@ ETABS墙使用ShellThin，面外弯曲修正为0.63³以对齐MVLEM默认面外�
 梁采用软件矩形截面，OpenSees仍为Euler梁，两种单元的剪切变形处理不同。
 两者的壳面内泊松效应、网格/连接和墙肢离散也未先验等价，差异必须逐项检查。
 
-最终 `outputs/etabs_residential_12_05` 用时91.42s：
+最终 `outputs/archive/evidence_20261029.zip::etabs_residential_12_05` 用时91.42s：
 
 - 1944墙片、972梁、2617节点；全部输入节点逐项读回，最大坐标差7.11e-15m。
 - 上述2617为对象节点；原生求解日志为2629分析节点（含12个内部楼板控制节点）、1944壳单元、972杆单元。
@@ -129,7 +133,7 @@ ETABS墙使用ShellThin，面外弯曲修正为0.63³以对齐MVLEM默认面外�
 `opensees_residential_12_02` 用相同输入完成独立的MVLEM模态与两方向静力诊断；
 全局平衡和独立计算的质量/转动惯量核对通过。
 按质量加权MAC及一对一匹配比较12阶，而不是只按周期序号强配；最小MAC为0.9903865。
-完整差异见 `outputs/etabs_comparison_12_02/comparison.json` 与report.md：
+完整差异见 `outputs/reports/etabs_comparison/comparison.json` 与report.md：
 
 | 指标 | ETABS | OpenSees | OpenSees相对ETABS差异 |
 |---|---|---|---|
@@ -159,7 +163,7 @@ ETABS墙使用ShellThin，面外弯曲修正为0.63³以对齐MVLEM默认面外�
 
 对应原生力学验证在 `tests/integration/test_mvlem_panel_mechanics.py`，
 短墙分析截面覆盖检查在test_wall_pier_mechanics.py。
-官方.cpp只读快照与SHA256位于 `outputs/etabs_mechanics_audit_01`，实测而非仅据master源码推定安装版本行为。
+官方.cpp只读快照与SHA256位于 `outputs/archive/evidence_20261029.zip::etabs_mechanics_audit_01`，实测而非仅据master源码推定安装版本行为。
 本轮新指纹 `e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62`，
 旧结果/代理标签不能作为当前筛选依据，没有重训或修改权重。
 
@@ -179,8 +183,8 @@ ETABS墙使用ShellThin，面外弯曲修正为0.63³以对齐MVLEM默认面外�
 复跑需新的运行目录：
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.etabs_cli cantilever --run outputs/new_cantilever
-.venv/Scripts/python.exe -m struct_agent.etabs_cli residential --layout outputs/residential_001_rcgnn_03/layout.json --spec configs/etabs_12_story_spec.json --design outputs/residential_12_inputs_01/design.json --run outputs/new_etabs_12 --opensees-reference outputs/new_opensees_12 --comparison outputs/new_comparison_12
+.venv/Scripts/python.exe -m struct_agent.etabs_cli cantilever --run outputs/current/new_cantilever
+.venv/Scripts/python.exe -m struct_agent.etabs_cli residential --layout outputs/current/residential_001/layout.json --spec configs/etabs_12_story_spec.json --design outputs/current/design_12_story/design.json --run outputs/current/new_etabs_12 --opensees-reference outputs/current/new_opensees_12 --comparison outputs/current/new_comparison_12
 ```
 
 下一最小任务：用可控墙/梁子结构和网格收敛检查定位X向约9.43%的位移差异，

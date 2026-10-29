@@ -23,7 +23,7 @@
 ## 当前基准与未解决问题
 
 - 建筑：`configs/test_case.json`，用户提供archi_comp.dxf本地副本。图纸、7个权重、环境和密钥保留原样。
-- 当前布局：`outputs/residential_001_rcgnn_03/`；12层条件 `configs/etabs_12_story_spec.json`；参数 `outputs/residential_12_inputs_01/design.json`。
+- 当前布局：`outputs/current/residential_001/`；12层条件 `configs/etabs_12_story_spec.json`；参数 `outputs/current/design_12_story/design.json`。
 - 同实现数值回归：`configs/real_fea_reference.json`，按哈希绑定布局、条件及 `opensees_residential_12_diagnostics_02` 分析记录。
 - 当前生产物理指纹：`e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62`。
 - 本地详细诊断仍不可行：墙配筋55项失败、墙剪压3项、梁剪压16项，按构件-楼层计；这些不是ETABS配筋结果。
@@ -39,36 +39,46 @@
 | OpenSees，Euler梁 | 2.447730 | 3.684367 | 4.357638 |
 
 2→4片仍变化26.2%/18.3%，整栋尚未收敛。原网格重建等价、纤维单独加密和小构件解析检查通过，仍未定位整栋原因。
-完整负面发现、控制组和两端原始结果均保留，见 `x_displacement_checks.md` 与 `outputs/x_displacement_diagnosis_01/report.md`。
+完整负面发现、控制组和两端原始结果均保留，见 `x_displacement_checks.md` 与 `outputs/reports/x_displacement/report.md`。
 不得把细网格某次结果指定为真值或直接写入GA/代理标签。
 
-## 本次任务：项目清理
+## 本次任务：进一步整理outputs
 
-已先读PLAN、RESEARCH_ROADMAP、README及upstream_contracts，只整理工件/文档，不修改计算源代码或训练模型。
+上一轮已删除48个过期运行并清理文档，清单见 `cleanup_2026-10-29.json`，提交8ea5d8b。
+用户要求继续清理outputs，本轮将剩余38个独立运行压缩归档，只直接展开当前输入、回归文件及两份主要报告。
 
-- 输出86→38个目录，2626→1246个文件；368156306→196924658字节（351.10→187.80 MiB），删除163.30 MiB。
-- 删除48个已替代的诊断、重复求解、开发重试和可重建mock运行；保留当前不收敛试验、代表性商业后端失败、真实决策历史及全部输入依赖。
-- 保留38个运行目录的树SHA256均未变；61项outputs内manifest输入依赖的文件哈希通过；真实回归输入哈希及solver_inventory输出引用通过。
-- 删除未被使用的 `configs/base.yaml` 和过期 `docs/member_diagnostics.md`；纠正README、物理修正/建模语义/优化/Phase 4说明中的旧状态与命令。
-- 将78KB逐轮进度日志压缩为本文件；历史文档可从Git查看。删除的outputs从未入Git，目录树摘要仅能识别内容、不能恢复文件。
-- 新增 `output_management.md` 与 `cleanup_2026-10-29.json`，记录保留理由、删除目录大小/数量和树哈希。
-- 批量递归删除被自动安全检查拦截，未执行；改为校验后的逐文件、再空目录删除。实际保留运行未做内部删改。
-- 仍被公共入口、测试及迁移来源审计使用的代码保留；没有为清理而删功能或改变物理指纹。
-- 额外删除src/tests/scripts下字节码及根目录pytest缓存，共33个缓存目录、175个文件、1430155字节；环境及保留运行不清缓存。
+```text
+outputs/
+├── current/       # residential_001布局/房间图与12层参数
+├── reference/     # 当前FEA回归与RC-GNN上游对照文件
+├── reports/       # X向/网格诊断和ETABS对照报告
+└── archive/       # evidence_20261029.zip，原38个完整运行
+```
+
+- 38个原目录整体入ZIP，1246个原文件逐一校验SHA256后删除松散原件；ZIP约77.4 MiB。
+- outputs直接展开的文件及ZIP/说明共32个，总占用196924658→86879640字节，即187.80→82.85 MiB，另释放104.95 MiB。
+- 当前输入、两个回归视图及两个报告视图为原件逐字节副本，共6个子目录；它们不是新求解记录。
+- 所有原模型、日志、运行源码、失败及不收敛结果、批准记录均保存在ZIP中，没有筛除不利结果。
+- 归档验证：38棵原目录树哈希、6个当前副本树哈希及61项outputs内输入依赖哈希通过。
+- 原manifest中的执行时绝对路径原样保留，旧outputs/<run>/...映射至ZIP内<run>/...；查 `outputs_archive_index.json`，不能当成仍存在的磁盘路径。
+- `real_fea_reference.json`只更新路径，数据哈希不变；solver_inventory使用明确的archive/member引用或当前报告路径。
+- 两处集成测试改读reference目录；README及相关说明同步新入口。生产代码、物理指纹、权重、原图、环境与密钥未修改。
+- 安全删除只针对校验过的叶文件和空目录，未使用递归删除；归档创建和核验成功后才删除原目录。
+- 树哈希复验按原Windows Path顺序排序；首次用字符串排序导致验证拒绝，纠正排序后38项全部吻合。未改动归档数据。
 
 验证命令：
 
 ```powershell
-.venv/Scripts/python.exe -m pytest -q --run-real tests/integration/test_real_adapters.py tests/integration/test_member_diagnostics.py tests/integration/test_symmetry_reference.py tests/integration/test_casino_session.py tests/unit/test_upstream_contracts.py
+.venv/Scripts/python.exe -m pytest -q --run-real tests/integration/test_real_adapters.py tests/integration/test_member_diagnostics.py tests/integration/test_symmetry_reference.py tests/integration/test_casino_session.py
 .venv/Scripts/python.exe -m pytest -q
 .venv/Scripts/python.exe -m pytest -q --run-real
 git diff --check
 ```
 
-结果：目标14 passed、8 warnings（25.97s）；默认129 passed、25 skipped、1 warning（9.89s）；
-完整真实154 passed、0 skipped、8 warnings（27.53s）。提示为现有PyG/ezdxf弃用提示；默认跳过项全部开启后通过。
-diff检查通过，无新增测试/生产代码变更；只复用现有验证覆盖本次清理。
-本次不调用学校API、不运行GA、不重新生成住宅工件；测试在临时目录复算当前回归。
+结果：目标12 passed、8 warnings（27.23s）；默认129 passed、25 skipped、1 warning（11.51s）；
+完整真实154 passed、0 skipped、8 warnings（29.97s）。提示均为既有PyG/ezdxf弃用提示；diff检查通过。
+本轮没有新建真实住宅运行、学校API调用或GA；测试在临时目录复算回归。
+当前单元/整栋可靠性边界未改变，网格未收敛与短物理墙肢问题仍待解决。
 
 ## 下一最小任务
 

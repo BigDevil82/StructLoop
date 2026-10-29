@@ -1,5 +1,8 @@
 # YJK API接入与分层交叉验证
 
+> 保留的原始运行已压缩归档，`outputs/archive/evidence_20261029.zip::<run>/...` 为ZIP成员引用。
+> 恢复方法见 `output_management.md`；最早的重复后台探针已在上一轮清理，具体见清理记录。
+
 2026-10-29，Phase 4 接口核查与验证计划。用户已确认加密狗正常、盈建科可以使用；
 这与本项目的自动求解链是否跑通分别记录，不再把授权状态简单写成未知。
 
@@ -32,11 +35,11 @@
 为避免大地坐标的单精度损失，先记录平面原点，再将m显式转换为局部整数mm。
 这是接口测试，不是将工程简化为一层后验证结构安全，也不是完整YJK工程模型。
 
-- `outputs/yjk_api_roundtrip_01/`：内存中有201节点/243网格，但直接CreateYDB得到的是空库。
+- `outputs/archive/evidence_20261029.zip::yjk_api_roundtrip_01/`：内存中有201节点/243网格，但直接CreateYDB得到的是空库。
   API返回true不能证明构件写入；首次读回两种路径方式原生退出1，无Python traceback。
-- `outputs/yjk_api_roundtrip_02/`：检查发现提交前PreModel为空，`DbModel_Assign`后DbModel有数据。
+- `outputs/archive/evidence_20261029.zip::yjk_api_roundtrip_02/`：检查发现提交前PreModel为空，`DbModel_Assign`后DbModel有数据。
   误将PreModel交给ReflectAndCreateYDB，返回false，没有生成模型；保留失败工件。
-- `outputs/yjk_api_roundtrip_03/`：提交后使用DbModel和CreateYDB，实际写入201节点、243网格、1标准层、1楼层。
+- `outputs/archive/evidence_20261029.zip::yjk_api_roundtrip_03/`：提交后使用DbModel和CreateYDB，实际写入201节点、243网格、1标准层、1楼层。
   `database_verification.json` 用只读数据库核对全部节点坐标、网格连接、2900 mm层高、输入/文件哈希及完整性。
   梁、墙、板对象均为0；还没有赋真实构件截面、组装28层、补齐规范参数或启动求解。
   对有效文件及项目目录再次尝试ReadYdb，均原生退出1，记录在 `readback_failures.json`。
@@ -147,15 +150,15 @@ worker无任意脚本/命令入口，校验只能读取运行目录内快照；�
 案例15的link.py明确 `RunCmd("yjks_pyload", script_path, function_name)` 可以传入路径和函数名。
 其源blob分别为 `76dec1b36a3ab3c460bf46df19ca7525dad8fd07`、
 `ce30d319bfa498f7c2054bc968fd2f722e7e6ce5`。
-完整来源URL、文件SHA256及源码留在 `outputs/yjk_final_attempt_01/official_sources.json` 和同目录快照。
+完整来源URL、文件SHA256及源码留在 `outputs/archive/evidence_20261029.zip::yjk_final_attempt_01/official_sources.json` 和同目录快照。
 
 本次只编写临时诊断脚本，没有将不成功的宿主控制分支迁入生产代码或开放给Agent。
 
-1. `outputs/yjk_final_attempt_01/`：在没有活动yjks进程的情况下，设置Version="8.0.0"、Invisible=True，
+1. `outputs/archive/evidence_20261029.zip::yjk_final_attempt_01/`：在没有活动yjks进程的情况下，设置Version="8.0.0"、Invisible=True，
    initConfig和RunYJK返回成功，建立IPC连接，子进程PID57892。
    RunCmd显示yjks_pyload执行Success，但未收到唯一token回传文件；不能把命令日志作为脚本执行成功。
    首次诊断过早读取不存在的回传文件，父脚本FileNotFoundError退出，已完整保留失败。
-2. `outputs/yjk_final_attempt_02/`：去除回传脚本对__file__的依赖，增加回传等待，
+2. `outputs/archive/evidence_20261029.zip::yjk_final_attempt_02/`：去除回传脚本对__file__的依赖，增加回传等待，
    先对隔离 `project/smoke.yjk` 调用官方UINew。新宿主PID61196，连接成功，
    UINew报告Success，但没有生成可验证的完整工程文件。
    进入yjks_pyload时软件内Python初始化输出以下原始错误：
@@ -172,7 +175,7 @@ worker无任意脚本/命令入口，校验只能读取运行目录内快照；�
    该样例仅是VENDOR_RUNTIME_DIAGNOSTIC_ONLY，绝不替换默认residential_001或用作论文工程结果。
    源blob `d29b3049072abeb29daea8b81f8c261c4812e32a`，
    文件SHA256 `9ff8ee766b51a2912572a0099d96fdc6a7de6326b3d5a8fbeb61a7d784448138`。
-   正式受控探针 `outputs/yjk_vendor_sample_read_01/` 仍在ReadYdb处0xC0000005退出。
+   正式受控探针 `outputs/archive/evidence_20261029.zip::yjk_vendor_sample_read_01/` 仍在ReadYdb处0xC0000005退出。
    随后严格按官方默认构造顺序，并将进程cwd设为软件安装目录再试，仍相同退出码；
    记录在 `_02/official_read_exact_outcome.json`，没有写入安装目录或修改官方模型参数。
 

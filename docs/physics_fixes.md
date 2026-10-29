@@ -41,8 +41,8 @@
 
 ## 当前输入与真实输出
 
-默认建筑为 `configs/test_case.json`，当前布局为 `outputs/residential_001_rcgnn_03/`。
-12层条件见 `configs/etabs_12_story_spec.json`，参数见 `outputs/residential_12_inputs_01/design.json`。
+默认建筑为 `configs/test_case.json`，当前布局为 `outputs/current/residential_001/`。
+12层条件见 `configs/etabs_12_story_spec.json`，参数见 `outputs/current/design_12_story/design.json`。
 详细结果由 `configs/real_fea_reference.json` 按哈希绑定；目前不可行，墙配筋55项、墙剪压3项、梁剪压16项失败。
 这些是本地简化检查结果，ETABS重力/反应谱/配筋尚未完成独立验证。
 
@@ -58,8 +58,8 @@
 模型兼容性不满足时明确 BLOCKED，不进行筛选。仅 mock 集成可用旧权重检验软件机械行为。
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/residential_001_rcgnn_03/layout.json --spec configs/etabs_12_story_spec.json --design outputs/residential_12_inputs_01/design.json --run outputs/new_diagnostic_run
-.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_03/layout.json --rooms outputs/residential_001_rcgnn_03/room_graph.json --spec configs/etabs_12_story_spec.json --run outputs/new_agent_run --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 2 --population 2 --generations 1
+.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/current/residential_001/layout.json --spec configs/etabs_12_story_spec.json --design outputs/current/design_12_story/design.json --run outputs/current/new_diagnostic_run
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/etabs_12_story_spec.json --run outputs/current/new_agent_run --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 2 --population 2 --generations 1
 ```
 
 诊断入口接受显式 `--design`；可用 `--reference` 对同一当前实现的记录做复算对照，拒绝跨实现对照。

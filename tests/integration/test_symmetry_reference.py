@@ -27,7 +27,7 @@ def test_union_matches_local_upstream_on_engineering_graph() -> None:
     selected = ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names], type_ignores=[])
     namespace = dict(globals(), DEFAULT_WALL_THICKNESS=200.)
     exec(compile(selected, str(source), "exec"), namespace)
-    run = Path("outputs/residential_001_rcgnn_02")
+    run = Path("outputs/reference/rcgnn_upstream")
     graph = RoomGraph.model_validate_json((run / "room_graph.json").read_text(encoding="utf-8"))
     ratios = np.load(run / "ratios.npy", allow_pickle=False)
     builder = FEMTopologyBuilder(gap_tolerance=200., min_length=100.)

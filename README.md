@@ -48,7 +48,7 @@ uv pip install --python .venv/Scripts/python.exe -e .
 后续真实生成、优化与闭环测试使用此图；L17_101 仅保留历史迁移回归，toy_01 仅保留 mock 测试。
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.cli generate --seed 42 --run outputs/new_residential_generation
+.venv/Scripts/python.exe -m struct_agent.cli generate --seed 42 --run outputs/current/new_residential_generation
 ```
 
 默认入口校验 DXF 哈希并使用旧项目为此图指定的 `category=2`。
@@ -64,7 +64,7 @@ uv pip install --python .venv/Scripts/python.exe -e .
 ## 固定布置参数优化
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.cli optimize --layout outputs/residential_001_rcgnn_03/layout.json --rooms outputs/residential_001_rcgnn_03/room_graph.json --spec configs/etabs_12_story_spec.json --seed 42 --budget-fea 20 --population 24 --generations 20 --run outputs/new_residential_optimization
+.venv/Scripts/python.exe -m struct_agent.cli optimize --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/etabs_12_story_spec.json --seed 42 --budget-fea 20 --population 24 --generations 20 --run outputs/current/new_residential_optimization
 ```
 
 `reference_spec.json` **仅为迁移回归示例**，显式列出了旧入口的 28 层、2.9m 层高、
@@ -115,7 +115,7 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 
 ```powershell
 .venv/Scripts/python.exe scripts/make_dummy_case.py --out data/examples/toy_01
-.venv/Scripts/python.exe -m struct_agent.cli run-case --case data/examples/toy_01/case.json --run outputs/my_mock_01 --seed 42 --budget-fea 4
+.venv/Scripts/python.exe -m struct_agent.cli run-case --case data/examples/toy_01/case.json --run outputs/current/my_mock_01 --seed 42 --budget-fea 4
 ```
 
 默认在请求切换布局时停为 `WAITING_APPROVAL`。若要测试完整的模拟审批链，在新运行命令中
@@ -149,7 +149,7 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 .venv/Scripts/python.exe -m pytest -q tests/unit/test_llm_policy.py tests/unit/test_optimization_env.py tests/unit/test_comparison.py
 ```
 
-`outputs/phase4_real_llm_01/` 已完成“真实分析→LLM 再决策→再次真实分析”，
+`outputs/archive/evidence_20261029.zip::phase4_real_llm_01/` 已完成“真实分析→LLM 再决策→再次真实分析”，
 5 次 FEA 均求解成功但结构不可行，预算耗尽后模型请求人工检查；仅作冒烟。
 用户已批准 `residential_001_symmetry_02` 作为本轮第二候选，批准绑定布局与设计条件哈希，
 不代表正式工程签审。后续真实跨布局结果见 [进度记录](docs/progress.md)。

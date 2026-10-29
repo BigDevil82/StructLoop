@@ -22,7 +22,7 @@ LLM 不接收 shell 工具，不修改几何、预算、求解结果或审批记
 审计保留请求、最终回答、usage、错误类型/信息/traceback 和每次尝试，不保存模型私有推理文本。
 token 为服务返回值；缺失 usage 单列，不能据此推定费用为零。
 
-首次真实API探针使用明确标记的合成状态；该开发探针已清理，历史记录见Git提交ef2c915。实际LLM/FEA轨迹保留于 `outputs/phase4_real_llm_01/`。
+首次真实API探针使用明确标记的合成状态；该开发探针已清理，历史记录见Git提交ef2c915。实际LLM/FEA轨迹保留于 `outputs/archive/evidence_20261029.zip::phase4_real_llm_01/`。
 模型合法返回人工检查，但把 `paused` 与 `engineering_review=PENDING` 误解为续作审批缺失。
 提示词已明确：前者是正常代际边界；后者指最终工程交付审查，不阻止已授权的优化。
 该问题及提示修正保存在Git历史中，原探针工件本次已清理。
@@ -30,7 +30,7 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 ## 真实运行
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_03/layout.json --rooms outputs/residential_001_rcgnn_03/room_graph.json --spec configs/etabs_12_story_spec.json --run outputs/new_agent_run --case-id residential_001 --purpose smoke_only --policy llm --seed 42 --budget-fea 5 --population 3 --generations 2
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/etabs_12_story_spec.json --run outputs/current/new_agent_run --case-id residential_001 --purpose smoke_only --policy llm --seed 42 --budget-fea 5 --population 3 --generations 2
 ```
 
 上例使用当前12层输入；极短物理墙肢尚未消解时会在前置检查处阻断，不应切换旧布局绕过门槛。
@@ -65,7 +65,7 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 .venv/Scripts/python.exe -m pytest -q tests/unit/test_llm_policy.py tests/unit/test_optimization_env.py tests/unit/test_comparison.py
 .venv/Scripts/python.exe -m pytest -q tests/integration/test_casino_session.py --run-real
 .venv/Scripts/python.exe -m pytest -q
-.venv/Scripts/python.exe -m struct_agent.evaluation.compare --run outputs/fixed_run --run outputs/llm_run --out outputs/comparison.json
+.venv/Scripts/python.exe -m struct_agent.evaluation.compare --run outputs/current/fixed_run --run outputs/current/llm_run --out outputs/comparison.json
 ```
 
 比较器要求案例、候选顺序、种子、预算、停止上限、优化配置、软件与代码哈希一致；
@@ -78,7 +78,7 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 ## 尚未完成的研究验收
 
 - 新图正式工程条件及规范口径尚待工程师确定；现有条件仅获准冒烟。
-- 用户已批准 `outputs/residential_001_symmetry_02/` 的上游 union 对称化候选仅作冒烟，
+- 用户已批准 `outputs/archive/evidence_20261029.zip::residential_001_symmetry_02/` 的上游 union 对称化候选仅作冒烟，
   批准文件为该目录 `user_approval.json`；真实跨布局结果和验证命令见 `docs/progress.md`。
 - 论文 Ours 的动作收益模型、对比假设、消融口径与多种子实验尚未定义并验证。
 - 人工审批界面、磁盘恢复、DWG/报告输出分别按后续阶段推进。

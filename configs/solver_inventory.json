@@ -42,10 +42,16 @@
       "stories": 12,
       "spec": "configs/etabs_12_story_spec.json",
       "spec_sha256": "6b7c7e71f461caf2ecfcdef59ccd08c5c4255b2f0403cc5f3808410b9d35e0e7",
-      "cantilever_run": "outputs/etabs_cantilever_04",
-      "residential_run": "outputs/etabs_residential_12_05",
+      "cantilever_run": {
+        "archive": "outputs/archive/evidence_20261029.zip",
+        "member": "etabs_cantilever_04/"
+      },
+      "residential_run": {
+        "archive": "outputs/archive/evidence_20261029.zip",
+        "member": "etabs_residential_12_05/"
+      },
       "model_sha256": "898c7857ca08e6d4255ba593851bb77d035ca93bc195d2c23c940ee7d238a615",
-      "comparison": "outputs/etabs_comparison_12_02",
+      "comparison": "outputs/reports/etabs_comparison",
       "wall_panels": 1944,
       "beam_objects": 972,
       "point_objects": 2617,
@@ -58,7 +64,7 @@
       "status": "NOT_ESTABLISHED",
       "case_id": "residential_001",
       "stories": 12,
-      "report": "outputs/x_displacement_diagnosis_01/report.md",
+      "report": "outputs/reports/x_displacement/report.md",
       "wall_vertical_subdivisions": [
         1,
         2,
@@ -111,13 +117,19 @@
       "hidden_host_ipc_connected": true,
       "hidden_host_execution_verified": false,
       "script_callback_verified": false,
-      "last_probe": "outputs/yjk_final_attempt_02",
+      "last_probe": {
+        "archive": "outputs/archive/evidence_20261029.zip",
+        "member": "yjk_final_attempt_02/"
+      },
       "last_probe_failure": "Embedded Python bootstrap SyntaxError and encoding errors; callback never received",
       "upstream_analysis_runner": "E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf/pipelines/structural/yjk_pipeline/analysis_runner.py",
       "upstream_analysis_runner_sha256": "f990ead9e043b1c3566ac2726b87a1e40fe08201747963c03351ab0a5442589c"
     },
     "readback_after_driver_update": {
-      "run": "outputs/yjk_background_probe_03",
+      "run": {
+        "archive": "outputs/archive/evidence_20261029.zip",
+        "member": "yjk_background_probe_03/"
+      },
       "status": "PROCESS_ERROR",
       "returncode": 3221225477,
       "exit_code_hex": "0xC0000005",
@@ -128,9 +140,18 @@
       "status": "SUSPENDED_UNRESOLVED",
       "user_instruction": "Retry once; stop pursuing if the integration cannot be established",
       "runs": [
-        "outputs/yjk_final_attempt_01",
-        "outputs/yjk_final_attempt_02",
-        "outputs/yjk_vendor_sample_read_01"
+        {
+          "archive": "outputs/archive/evidence_20261029.zip",
+          "member": "yjk_final_attempt_01/"
+        },
+        {
+          "archive": "outputs/archive/evidence_20261029.zip",
+          "member": "yjk_final_attempt_02/"
+        },
+        {
+          "archive": "outputs/archive/evidence_20261029.zip",
+          "member": "yjk_vendor_sample_read_01/"
+        }
       ],
       "official_version_branch": "8.0",
       "official_control_blob": "76dec1b36a3ab3c460bf46df19ca7525dad8fd07",
@@ -140,7 +161,10 @@
       "commercial_solver_calls": 0
     },
     "geometry_export_evidence": {
-      "run": "outputs/yjk_api_roundtrip_03",
+      "run": {
+        "archive": "outputs/archive/evidence_20261029.zip",
+        "member": "yjk_api_roundtrip_03/"
+      },
       "source_case": "residential_001",
       "joints": 201,
       "grids": 243,
@@ -151,5 +175,7 @@
       "slabs": 0,
       "database_sha256": "039ae5e39a0432d8c84f3413404c6deac2406058c66967222371c20673ea1eb8"
     }
-  }
+  },
+  "artifact_index": "docs/outputs_archive_index.json",
+  "artifact_location_note": "Archive/member objects refer to exact ZIP members, not ordinary filesystem paths. Run bytes and model hashes were preserved."
 }

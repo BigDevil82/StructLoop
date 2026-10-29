@@ -85,7 +85,7 @@ class SyntheticNativeResponseSolver:
 @pytest.fixture
 def case_inputs() -> tuple[LayoutCandidate, RoomGraph, ProjectSpec, CasinoConfig]:
     case, _ = load_generation_case(Path("configs/test_case.json"))
-    run = Path("outputs/residential_001_rcgnn_02")
+    run = Path("outputs/reference/rcgnn_upstream")
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["inputs"]["dxf"]["sha256"] == case.sha256
     layout = LayoutCandidate.model_validate_json((run / "layout.json").read_text(encoding="utf-8"))
@@ -100,8 +100,8 @@ def case_inputs() -> tuple[LayoutCandidate, RoomGraph, ProjectSpec, CasinoConfig
 
 def make_service(directory: Path, cfg: CasinoConfig, *, budget: int = 100, fail: bool = False) -> AnalysisService:
     create_run(directory, seed=cfg.seed, inputs={"case": Path("configs/test_case.json"),
-        "layout": Path("outputs/residential_001_rcgnn_02/layout.json"),
-        "rooms": Path("outputs/residential_001_rcgnn_02/room_graph.json"),
+        "layout": Path("outputs/reference/rcgnn_upstream/layout.json"),
+        "rooms": Path("outputs/reference/rcgnn_upstream/room_graph.json"),
         "spec": Path("configs/reference_spec.json"), "feasibility": cfg.feasibility_weights,
         "steel": cfg.steel_weights}, config={"fidelity": "mock", "test": "CASINO continuation only",
         "notice": "SYNTHETIC FEA; NOT ENGINEERING RESULTS", "casino": cfg.model_dump(mode="json"),
@@ -197,7 +197,7 @@ def test_matched_three_policy_comparison(case_inputs: tuple, tmp_path: Path) -> 
     alternate = layout.model_copy(update={"layout_id": "synthetic_candidate_b"})
     pool = (layout, alternate)
     inputs = {"spec": Path("configs/reference_spec.json"), "feasibility": cfg.feasibility_weights,
-              "steel": cfg.steel_weights, "rooms": Path("outputs/residential_001_rcgnn_02/room_graph.json")}
+              "steel": cfg.steel_weights, "rooms": Path("outputs/reference/rcgnn_upstream/room_graph.json")}
     for i, candidate in enumerate(pool):
         path = tmp_path / f"candidate_{i}.json"
         write_json(path, candidate.model_dump())
