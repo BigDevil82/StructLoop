@@ -64,12 +64,51 @@ class SingleWallSpec(Contract):
         return self
 
 
+class SubstructureSelection(Contract):
+    name: Literal['L_wall', 'T_wall', 'wall_beam']
+    member_ids: tuple[str, ...] = Field(min_length=2, max_length=20)
+
+    @model_validator(mode='after')
+    def unique_members(self) -> SubstructureSelection:
+        if len(set(self.member_ids)) != len(self.member_ids):
+            raise ValueError('Duplicate selected members')
+        return self
+
+
+class StructuralBatchSpec(Contract):
+    """Parent-derived 12-story elastic subsystems with prescribed floor masses."""
+    kind: Literal['structural_batch'] = 'structural_batch'
+    residential: ResidentialSpec
+    selections: tuple[SubstructureSelection, ...] = Field(min_length=1, max_length=3)
+
+    @model_validator(mode='after')
+    def source_members_exist(self) -> StructuralBatchSpec:
+        if len({s.name for s in self.selections}) != len(self.selections):
+            raise ValueError('Duplicate subsystem names')
+        source = {m.member_id:m for m in self.residential.layout.members}
+        for selection in self.selections:
+            if any(key not in source for key in selection.member_ids):
+                raise ValueError(f'Unknown source member in {selection.name}')
+            if not any(source[key].role == 'wall' for key in selection.member_ids):
+                raise ValueError('A subsystem requires walls')
+        return self
+
+
+class StructuralBatchSettings(Contract):
+    layout: Path
+    project: Path
+    design: Path
+    archive: Path
+    single_wall: Path
+    selections: tuple[SubstructureSelection, ...] = Field(min_length=1, max_length=3)
+
+
 class ETABSRequest(Contract):
     config: ETABSConfig
-    spec: CantileverSpec | ResidentialSpec | SingleWallSpec = Field(discriminator='kind')
+    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec = Field(discriminator='kind')
 
     @model_validator(mode='after')
     def theory_scope(self) -> ETABSRequest:
-        if not isinstance(self.spec,ResidentialSpec) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
+        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
             raise ValueError('Beam/mesh comparison options are supported only for the residential diagnostic')
         return self

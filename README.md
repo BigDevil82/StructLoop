@@ -185,6 +185,16 @@ ETABS小模型与12层住宅对照见 [docs/etabs_cross_validation.md](docs/etab
 可用 `.venv/Scripts/python.exe -m struct_agent.etabs_cli single-wall --help` 查看入口，完整复现命令和结果见上述文档。
 单墙未复现整栋显著变软，当前仍不开展正式优化。
 
+最新规则按用户要求采用同条件双软件差异小于5%即通过并关闭，不再核查校准。
+已批量完成L/T形墙、墙梁组合及12层整栋的周期、逐层位移和层间响应对照，
+结果见 [结构批量对照](docs/structural_comparison.md)。运行入口：
+
+```powershell
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.structural_batch --run outputs/current/new_structural_batch --report outputs/reports/new_structural_batch
+```
+
+原粗网格屋顶主方向位移已通过，但整栋部分逐层/层间响应及高阶周期仍超限，不能标为全部通过。
+
 ## Git 与本地数据
 
 本地仓库使用 `main` 分支。每次任务完成并验证后更新进度记录、检查暂存内容并提交；不自动推送远端。

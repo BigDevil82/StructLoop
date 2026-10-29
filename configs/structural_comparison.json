@@ -1,0 +1,12 @@
+{
+  "layout": "outputs/current/residential_001/layout.json",
+  "project": "configs/etabs_12_story_spec.json",
+  "design": "outputs/current/design_12_story/design.json",
+  "archive": "outputs/archive/evidence_20261029.zip",
+  "single_wall": "outputs/reports/single_wall_12_02/comparison.json",
+  "selections": [
+    {"name": "L_wall", "member_ids": ["shearwalls_4", "shearwalls_87"]},
+    {"name": "T_wall", "member_ids": ["shearwalls_9", "shearwalls_10", "shearwalls_116"]},
+    {"name": "wall_beam", "member_ids": ["shearwalls_4", "shearwalls_5", "shearwalls_79", "shearwalls_80", "shearwalls_87", "beams_4"]}
+  ]
+}

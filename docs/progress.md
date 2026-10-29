@@ -1,6 +1,7 @@
 # 当前进度
 
 更新：2026-10-29。当前处于Phase 4：已有Agent决策与真实调用闭环，先解决结构分析可靠性，再推进有效优化实验。
+最新用户规则：跨软件同条件差异小于5%即通过，停止核查校准；相关任务合并批量推进，已进入结构层面比对。
 本文件只保留现状和最近任务。早期逐轮日志见 `git show ef2c915:docs/progress.md`；代码及文档历史由Git保留。
 默认案例和工程条件是不同的确认事项：建筑固定为residential_001；现有条件仅获准冒烟，12层用于当前软件对照。
 
@@ -42,7 +43,39 @@
 完整负面发现、控制组和两端原始结果均保留，见 `x_displacement_checks.md` 与 `outputs/reports/x_displacement/report.md`。
 不得把细网格某次结果指定为真值或直接写入GA/代理标签。
 
-## 本次任务：同边界单片墙解析与竖向网格对照
+## 本批任务：5%规则及结构层面批量比对
+
+起点d0e17ed，工作区干净。用户要求加快进度，取消单墙水平离散/泊松补查，采用小于5%即通过并关闭的原则。
+AGENTS第6/11条、PLAN及ROADMAP已同步该明确授权，不再逐个小任务交付。
+
+- 新增 `adapters/etabs/{tolerance,structural_batch}.py`、严格批量配置/请求及固定worker分支；
+  复用现有两端建模器，在同一ETABS专用实例完成原图抽取的L形墙、T形墙、墙梁组合，均沿用12层条件。
+- 整栋1/2/4片已有真实结果经归档SHA256核验后直接重评，无重复求解；每模型完整比较12阶周期、
+  72项逐层位移/扭转、48项层间位移角。保留小量、超限项及绝对差异，不挑选有利网格。
+- 已有单墙10/10项通过并关闭；3个新子系统的12阶周期全部小于5%，不再检查校准。
+  L形墙屋顶X/Y差4.87%/4.52%、墙梁组合4.62%/4.47%，均通过；T形墙5.64%/5.81%超限。
+- 整栋原粗网格屋顶X/Y差3.08%/4.26%，通过并关闭；但首层Y位移差22.44%，第10–12阶周期约5.10%–6.03%，
+  以及细化网格部分层间响应仍超限。6个模型792项中288项通过、504项超限，结构比对完成但不能标为全部通过。
+- 两端三组新子系统均实际求解成功、整体平衡/有限性通过，ETABS合计96.14s；
+  无负刚度特征值或warning/error条目。子系统保留父楼板多边形仅供双方一致的规定质量协议，不作实际分担面积确认。
+- 源码/配置/测试、README及结构说明、输出管理已更新；证据索引 `configs/structural_comparison_evidence.json`。
+  工件 `outputs/current/structural_comparison_01/`，报告 `outputs/reports/structural_comparison_01/`，
+  详细结果与范围见 `docs/structural_comparison.md`。生产建模器、物理指纹、布局、权重不变；无GA/训练/YJK重试。
+
+验证命令：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_structural_tolerance.py tests/unit/test_etabs.py tests/integration/test_structural_subsystem.py --run-real
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.structural_batch --run outputs/current/structural_comparison_01 --report outputs/reports/structural_comparison_01
+.venv/Scripts/python.exe -m pytest -q
+git diff --check
+```
+
+目标27 passed（0.52s）；默认全量146 passed、29 skipped、1个既有PyG弃用提示（8.92s）。
+商业真实运行状态STRUCTURAL_COMPARISON_COMPLETED，超限逐项保留；“测试通过/完成比对”不替代跨软件全部响应通过。
+18个证据索引哈希复验通过，141个执行源码/当前源码哈希一致；暂存差异检查通过，仅提交源码、测试、文档和配置/哈希。
+
+## 上一批：单片墙解析与竖向网格对照（d0e17ed）
 
 起点399d8f3，工作区干净。上一轮38个运行已归档，入口仍按 `output_management.md`，未重复迁移或改写旧证据。
 本轮仅完成Phase 4的单墙最小切片，未扩展L/T形墙、墙梁或开展正式优化。
@@ -82,10 +115,10 @@ ETABS正式复跑176.47s，状态SUCCESS仅指工况及响应检查，不是跨�
 首次pytest因两个新测试文件同名产生收集错误，已将集成文件改为test_single_wall_mechanics.py后重跑通过。
 本轮没有学校API、GA、模型训练或YJK重试。
 
-## 下一最小任务
+## 后续批次
 
-先固定本单墙物理条件增加ETABS水平离散/泊松伸缩控制，再扩展共边L/T形墙→墙梁连接，
-分开检查真实楼层刚性楼板、共节点和高度细分，定位整栋粗网格过硬及两端差异。
-之后确定生产单元/网格策略，补重力/地震谱/组合和规范配筋独立复核。
+集中处理结构比对中达到5%的项目：整栋低层/层间响应、细化网格差异及T形墙连接运动学。
+已通过单墙、子系统周期及主响应不再核查校准；不再进行单墙水平离散/泊松补查。
+之后补重力/地震谱/组合和规范配筋独立复核。
 分析基础与几何受理问题解决后，才进入正式优化、代理兼容性验证及等预算策略比较。
 人工审批界面、磁盘恢复、DWG和工程成果输出仍属于后续阶段。
