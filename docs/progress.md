@@ -777,3 +777,49 @@ stdout表明SDK环境初始化成功后进入model_read。模型来源为 `yjk_a
 实际探针命令父进程正常保存PROCESS_ERROR结果，不等于子进程成功；不覆盖既有运行目录复跑。
 下一最小任务：核实专用独立宿主的初始化与非交互加载脚本方式，解决模型读回，
 再补全本例梁墙板/28层模型并检查本次分析完成和结果契约，随后开展数值交叉验证。
+
+## 2026-10-29：Phase 4盈建科后台链路有限重试，按用户要求暂停
+
+用户要求“再尝试一下，实在无法打通就算了”。本次只做受限诊断，不增加未验证的生产接口。
+读取项目约定并核对厂商Gitee 8.0分支，通过公开API获得指定示例源码、blob ID和SHA256。
+官方control.py确认Version="8.0.0"、Invisible=True可配置；link.py确认RunCmd三参数可传脚本路径和函数名，
+不需要弹出文件选择框。来源存于 `outputs/yjk_final_attempt_01/official_sources.json`。
+
+本机实际结果：
+
+- `_01`：启动了专用隐藏宿主并建立IPC，命令报告Success，但没有回传文件；
+  首次探针过早读取文件报FileNotFoundError，失败原样保留。
+- `_02`：修正探针的等待，并避免依赖宿主中的__file__，新增隔离UINew调用。
+  再次确认隐藏宿主和IPC可用，UINew仅报告Success；未生成可验证的完整工程文件。
+  软件内Python在yjks_pyload入口输出路径原始字符串未终止的SyntaxError，随后有UTF-8编码错误。
+  回传脚本的导入/函数标记均不存在，75s总运行上限后清理；不能将接口报告成功当成实际脚本执行。
+- 官方案例6的kj.ydb只用于SDK运行时诊断，来源SHA256
+  `9ff8ee766b51a2912572a0099d96fdc6a7de6326b3d5a8fbeb61a7d784448138`。
+  `outputs/yjk_vendor_sample_read_01` 经现有Adapter仍在ReadYdb处0xC0000005退出。
+  再按官方默认构造顺序并将cwd设为安装目录读取，同样退出；
+  保存于 `_02/official_read_exact_outcome.json`。官方样例最终哈希未变。
+
+监督进程仅清理由本次worker启动、匹配exe路径/PID/创建时间的宿主57892和61196；
+未操作用户工程或原有启动器，结束确认无yjks进程。没有修改软件安装文件或上游仓库。
+本轮商业求解=0、OpenSees求解=0、学校LLM调用=0；不产生论文数值结果。
+已确认能力仅为隐藏宿主启动与IPC连接，脚本执行/完整建模/分析/结果提取仍BLOCKED。
+详细原始错误、来源与判据见 `docs/yjk_cross_validation.md`；更新 `configs/solver_inventory.json`。
+没有新增业务源码/依赖，不把失败探针迁入生产控制链。
+
+实际命令（仅在已有工件所在目录记录，不覆盖复跑）：
+
+```powershell
+.venv/Scripts/python.exe outputs/yjk_final_attempt_01/host_supervisor.py
+.venv/Scripts/python.exe outputs/yjk_final_attempt_02/host_supervisor.py
+.venv/Scripts/python.exe -c "from pathlib import Path; from struct_agent.adapters.yjk_runtime import YJKRuntimeConfig, probe_model_read; result=probe_model_read(Path('outputs/yjk_final_attempt_02/vendor_sample_kj.ydb'), Path('outputs/yjk_vendor_sample_read_01'), YJKRuntimeConfig(install_root=Path('D:/Softwares/YJKS_8_0_0'))); print(result.model_dump_json(indent=2))"
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_yjk_runtime.py
+.venv/Scripts/python.exe -m pytest -q
+```
+
+默认构造顺序的额外读取由主环境subprocess.run调用SDK Python，脚本为
+`outputs/yjk_final_attempt_02/official_read_exact_worker.py`，cwd=`D:/Softwares/YJKS_8_0_0`，超时20s。
+工件完整性摘要在 `_02/verification.json`。目标9 passed，1.29s；全套115 passed、17 skipped、1 warning，9.38s。
+17项仍是默认关闭的本地真实测试，不包含本轮实际商业接口失败诊断。
+按用户要求暂停后台自动接入，避免继续为未打通路线增加代码。
+下一最小任务回到短墙/短梁几何修复与现有后端的确定性验证；盈建科人工交叉复核尚未开展，
+自动接入待厂商可工作的运行环境/基线明确后再恢复，不作为主线继续推进的前置条件。

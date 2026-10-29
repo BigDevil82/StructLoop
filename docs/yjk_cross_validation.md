@@ -135,3 +135,52 @@ worker无任意脚本/命令入口，校验只能读取运行目录内快照；�
 下一最小任务是核对独立宿主的官方初始化和非交互脚本加载方式。
 只对本项目专用实例进行启动、加载、命令执行和退出；先验证模型读回与完整导出，
 再实现“分析完成且输出属于本次运行”的检查，最后接严格结果解析。已有活动实例不参与探测。
+
+## 有限重试结论：宿主启动通过，脚本和模型读取仍阻塞（2026-10-29）
+
+用户要求再尝试，无法打通即可停止。此次核对了厂商官方8.0分支，
+而非按默认8.1分支猜测接口：
+[Python API](https://gitee.com/yjk-opensource/yjkapi_-python/tree/8.0)、
+[C# API](https://gitee.com/yjk-opensource/csharp-yjks/tree/8.0)。
+网页树读取失败后，通过Gitee公开API取得树和指定源码blob，未执行下载的案例原脚本。
+其中案例10的control.py明确Version="8.0.0"及Invisible选项；
+案例15的link.py明确 `RunCmd("yjks_pyload", script_path, function_name)` 可以传入路径和函数名。
+其源blob分别为 `76dec1b36a3ab3c460bf46df19ca7525dad8fd07`、
+`ce30d319bfa498f7c2054bc968fd2f722e7e6ce5`。
+完整来源URL、文件SHA256及源码留在 `outputs/yjk_final_attempt_01/official_sources.json` 和同目录快照。
+
+本次只编写临时诊断脚本，没有将不成功的宿主控制分支迁入生产代码或开放给Agent。
+
+1. `outputs/yjk_final_attempt_01/`：在没有活动yjks进程的情况下，设置Version="8.0.0"、Invisible=True，
+   initConfig和RunYJK返回成功，建立IPC连接，子进程PID57892。
+   RunCmd显示yjks_pyload执行Success，但未收到唯一token回传文件；不能把命令日志作为脚本执行成功。
+   首次诊断过早读取不存在的回传文件，父脚本FileNotFoundError退出，已完整保留失败。
+2. `outputs/yjk_final_attempt_02/`：去除回传脚本对__file__的依赖，增加回传等待，
+   先对隔离 `project/smoke.yjk` 调用官方UINew。新宿主PID61196，连接成功，
+   UINew报告Success，但没有生成可验证的完整工程文件。
+   进入yjks_pyload时软件内Python初始化输出以下原始错误：
+
+   ```text
+   exe_dir = r'D:\Softwares\YJKS_8_0_0\'
+   SyntaxError: unterminated string literal (detected at line 6)
+   ```
+
+   随后打印Python版本/路径的语句还有UTF-8解码错误。没有host_import.json或host_ping.json，
+   因此无法证明回传脚本已执行；75s运行上限后清理本次独立宿主。
+   此日志说明宿主脚本入口当前有初始化错误，尚未查明其厂商内部实现位置；不二进制打补丁或覆盖软件安装文件。
+3. 使用官方案例6提供的 `kj.ydb` 排除“只因住宅几何骨架缺构件而读取失败”的单一解释。
+   该样例仅是VENDOR_RUNTIME_DIAGNOSTIC_ONLY，绝不替换默认residential_001或用作论文工程结果。
+   源blob `d29b3049072abeb29daea8b81f8c261c4812e32a`，
+   文件SHA256 `9ff8ee766b51a2912572a0099d96fdc6a7de6326b3d5a8fbeb61a7d784448138`。
+   正式受控探针 `outputs/yjk_vendor_sample_read_01/` 仍在ReadYdb处0xC0000005退出。
+   随后严格按官方默认构造顺序，并将进程cwd设为软件安装目录再试，仍相同退出码；
+   记录在 `_02/official_read_exact_outcome.json`，没有写入安装目录或修改官方模型参数。
+
+两次宿主仅由专用SDK worker启动；监督进程按后代关系、可执行文件绝对路径、PID及创建时间确定所有权，
+异常后仅终止本次拥有的实例。结束时没有yjks进程，仅原有YjkLauncher保留。
+没有打开现有用户工程，没有运行前处理、商业求解或读取工程分析结果；商业求解次数=0。
+完整自动链仍为BLOCKED，当前只确认“隐藏启动+IPC连接”，不能宣称脚本、建模、分析或提取通过。
+
+按用户要求，暂停商业后台链路排查，保留可重现记录，不继续增加宿主接入代码。
+后续研究优先回到现有求解后端的几何修复与确定性校核；盈建科可保留为工程师在软件中独立复核的参照，
+该人工复核目前也尚未开展。只有厂商修复/明确运行环境或获得可工作的接口基线后才考虑恢复自动接入。

@@ -34,11 +34,16 @@
     },
     "license_evidence": "User confirmed hardware dongle and normal GUI use, 2026-10-29; not a solver invocation result.",
     "model_api_readback": "NATIVE_ACCESS_VIOLATION_UNRESOLVED",
-    "background_analysis": "NOT_VALIDATED",
+    "background_analysis": "BLOCKED_SCRIPT_RUNTIME",
     "host_runtime": {
       "user_confirmed_script_command": "yjks_pyload",
       "hidden_host_config_declared": true,
+      "hidden_host_startup_verified": true,
+      "hidden_host_ipc_connected": true,
       "hidden_host_execution_verified": false,
+      "script_callback_verified": false,
+      "last_probe": "outputs/yjk_final_attempt_02",
+      "last_probe_failure": "Embedded Python bootstrap SyntaxError and encoding errors; callback never received",
       "upstream_analysis_runner": "E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf/pipelines/structural/yjk_pipeline/analysis_runner.py",
       "upstream_analysis_runner_sha256": "f990ead9e043b1c3566ac2726b87a1e40fe08201747963c03351ab0a5442589c"
     },
@@ -48,6 +53,17 @@
       "returncode": 3221225477,
       "exit_code_hex": "0xC0000005",
       "stage": "Hi_AddToAndReadYjk.ReadYdb",
+      "commercial_solver_calls": 0
+    },
+    "bounded_retry": {
+      "status": "SUSPENDED_UNRESOLVED",
+      "user_instruction": "Retry once; stop pursuing if the integration cannot be established",
+      "runs": ["outputs/yjk_final_attempt_01", "outputs/yjk_final_attempt_02", "outputs/yjk_vendor_sample_read_01"],
+      "official_version_branch": "8.0",
+      "official_control_blob": "76dec1b36a3ab3c460bf46df19ca7525dad8fd07",
+      "official_link_blob": "ce30d319bfa498f7c2054bc968fd2f722e7e6ce5",
+      "vendor_fixture_sha256": "9ff8ee766b51a2912572a0099d96fdc6a7de6326b3d5a8fbeb61a7d784448138",
+      "vendor_fixture_read_exit_hex": "0xC0000005",
       "commercial_solver_calls": 0
     },
     "geometry_export_evidence": {
