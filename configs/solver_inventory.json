@@ -33,7 +33,23 @@
       }
     },
     "license_evidence": "User confirmed hardware dongle and normal GUI use, 2026-10-29; not a solver invocation result.",
-    "model_api_readback": "NATIVE_PROCESS_EXIT_UNRESOLVED",
+    "model_api_readback": "NATIVE_ACCESS_VIOLATION_UNRESOLVED",
+    "background_analysis": "NOT_VALIDATED",
+    "host_runtime": {
+      "user_confirmed_script_command": "yjks_pyload",
+      "hidden_host_config_declared": true,
+      "hidden_host_execution_verified": false,
+      "upstream_analysis_runner": "E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf/pipelines/structural/yjk_pipeline/analysis_runner.py",
+      "upstream_analysis_runner_sha256": "f990ead9e043b1c3566ac2726b87a1e40fe08201747963c03351ab0a5442589c"
+    },
+    "readback_after_driver_update": {
+      "run": "outputs/yjk_background_probe_03",
+      "status": "PROCESS_ERROR",
+      "returncode": 3221225477,
+      "exit_code_hex": "0xC0000005",
+      "stage": "Hi_AddToAndReadYjk.ReadYdb",
+      "commercial_solver_calls": 0
+    },
     "geometry_export_evidence": {
       "run": "outputs/yjk_api_roundtrip_03",
       "source_case": "residential_001",

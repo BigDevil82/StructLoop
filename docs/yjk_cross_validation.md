@@ -13,8 +13,8 @@
 |---|---|---|
 | 建模 | `DataFunc` 的标准层、楼层、节点、网格、梁墙截面及布置、板创建接口 | 节点/网格/楼层持久化已实测；完整梁墙板模型待实现 |
 | YDB写入 | `DbModel_Assign`、`Hi_AddToAndReadYjk.SetDbmodel/CreateYDB` | 先提交内存模型再创建文件，已验证几何数据实际落盘 |
-| 模型读回 | `Hi_AddToAndReadYjk.ReadYdb` | 独立进程测试原生退出1，尚未解决；目前用SQLite只读方式核对自建文件 |
-| 前处理和求解控制 | `YJKSControl`、`YJKSUIPy.QRunCommandEx`、`YJKSCommandPy.RunCommand` | 入口存在；具体命令、初始化顺序和完成判据未验证，不猜命令字符串 |
+| 模型读回 | `Hi_AddToAndReadYjk.ReadYdb` | 驱动更新后独立进程仍以0xC0000005退出；目前用SQLite只读方式核对自建文件 |
+| 前处理和求解控制 | `YJKSControl`、`YJKSUIPy.QRunCommandEx`、`YJKSCommandPy.RunCommand` | 旧脚本提供了命令序列；独立宿主初始化、完成判据尚未验证 |
 | 分析与配筋结果 | `YJKSDsnDataPy` 的质量、周期、位移、墙柱标准内力与配筋等查询 | 声明存在；尚无本轮商业求解结果，不能宣称读取已成功 |
 
 明确查到的结果接口示例：`dsnGetTolMass`、`dsnGetFirstPeriod`、`dsnGetNodeDis`、
@@ -90,3 +90,48 @@ CASINO标签和局部校准仍绑定布局、条件与分析协议，不直接�
 
 下一小任务：解决SDK模型读回/初始化问题，完成当前住宅的梁墙板截面和28层模型导出，核对YDB实际内容。
 随后确认一个固定计算任务及结果读取，才进行上述数值交叉验证。所有修复直接推进，不要求用户重复确认。
+
+## 后台方式、驱动复测与旧脚本审查（2026-10-29）
+
+用户确认：独立脚本直接导入YJKAPI，软件内脚本通过 `yjks_pyload` 选择运行。
+独立Python写YDB、无界面求解、外部进程控制隐藏的软件宿主是三种不同能力。
+目前只验证了第一种的几何骨架持久化，不能承诺全链条无需宿主。
+已安装SDK公开 `ControlConfig.Version/Invisible/Pid`，默认null/false/-1；
+`YJKSControl`提供initConfig、RunYJK、init、RunCmd和exit等方法。
+这些声明说明可继续调查隐藏宿主方式，不能证明能非交互加载脚本或后台完成分析。
+Version参数含义、独立实例的所有权和项目路径传入方式需要核实；不能猜参数连接用户当前实例。
+
+新的 `adapters/yjk_runtime.py` 只开放固定模型读探针：一致性SQLite快照→固定SDK worker→检查返回计数。
+请求通过stdin传入，避免YJKAPI将命令行第二参数误当SDK加载模式；主项目不导入CLR。
+worker无任意脚本/命令入口，校验只能读取运行目录内快照；父进程保留超时、退出码、日志和错误类型。
+成功状态仅为SDK_READ_COUNTS_MATCH，不代表完整几何一致、规范合规或商业求解通过。
+计数相等的单元测试使用明确标记的合成进程响应，不是实际SDK成功记录。
+
+驱动更新后的真实只读探针：
+
+- `outputs/yjk_background_probe_01`：对有效的几何骨架YDB调用ReadYdb，原生退出0xC0000005。
+- `_02`：改为使用DataFunc提供的DbModel初始化读取桥，仍是相同退出码。
+- `_03`：经新增受控Adapter复测，SDK打印Environment initialized successfully，
+  随后在worker的ReadYdb处发生access violation；保存outcome.json、stdout/stderr、native_fault.log及模型快照。
+
+上述结果不能判定加密狗驱动是之前失败的原因，也不能判定正常GUI启动等于独立SDK上下文正常。
+原因仍未解决；完整模型、真实前处理/求解与结果提取标记为BLOCKED/未验证。商业求解次数为0。
+没有启动、关闭或操作用户已打开的工程。
+
+用户提供的上游脚本位于 `Png2Dxf/pipelines/structural/yjk_pipeline/`，只读审查：
+
+- `analysis_runner.py`（SHA256 `f990ead9e043b1c3566ac2726b87a1e40fe08201747963c03351ab0a5442589c`）
+  使用YJKSUIPy和YJKSCommandPy，属于宿主脚本。已有命令序列为
+  yjk_repairex、yjk_save、yjk_setlayersupport、yjkspre_genmodrel、
+  yjktransload_tlplan、yjktransload_tlvert、yjkdesign_dsncalculating_all；
+  可作为后续固定白名单的来源，尚未在本项目实测。原脚本忽略RunCommand返回值，
+  没有新鲜结果和完成状态判据，不能以“未抛异常”当计算完成。
+- `result_extractor.py`（SHA256 `af0f88997d59a87d00f2e145069f978cbc7de0aa673cd0b3af506e61b3074176`）
+  将缺失/转换错误替为0、按数值大小猜质量字段、去重接近的周期、猜位移角字段；
+  这些逻辑可能误读结果，不迁移。后续按官方返回契约、单位、状态及模态序号严格解析，缺失显式失败。
+- 旧model_builder包含硬编码工程参数和刷新当前软件的操作；pipeline允许清理旧文件，
+  run_analysis=False也可能标记analysis_success=True。不整体复制旧流程。
+
+下一最小任务是核对独立宿主的官方初始化和非交互脚本加载方式。
+只对本项目专用实例进行启动、加载、命令执行和退出；先验证模型读回与完整导出，
+再实现“分析完成且输出属于本次运行”的检查，最后接严格结果解析。已有活动实例不参与探测。

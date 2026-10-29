@@ -738,3 +738,42 @@ YJK自带Python 3.10.11执行 `import YJKAPI` 返回 `YJK_API_IMPORT_OK`、exit=
 仓库回归 `.venv/Scripts/python.exe -m pytest -q`：106 passed、17 skipped、1 warning，9.54s。
 17项为默认关闭的本地真实测试；本轮没有改计算代码，不重复执行建筑FEA，YJK探针单独按上述真实工件核验。
 下一最小任务：解决模型读回上下文，补齐当前住宅的梁墙板截面、楼层和明确计算参数，再验证一轮前处理/求解/结果读取。
+
+## 2026-10-29：Phase 4受控SDK进程、驱动更新后复测与宿主脚本核查
+
+本次小任务只处理商业SDK进程边界和模型读取诊断，不改RC-GNN、CASINO、GA、物理组合或权重。
+用户提供了yjks_pyload入口和旧analysis_runner.py路径；只读检查旧pipeline，未更改上游文件。
+
+新增 `adapters/yjk_runtime.py` 与独立Python 3.10兼容 `yjk_read_worker.py`：
+固定read_model操作、stdin请求、只读源库的一致性快照、新建不可覆盖目录、固定worker及超时；
+保留stdout/stderr、原生退出码、父进程错误及worker故障栈，返回成功还需计数严格匹配。
+不使用shell，不启动/附着/关闭GUI实例，不开放任意SDK命令或脚本。
+成功仅表示SDK读取计数相符，不是完整模型或求解验收。
+新增9项测试覆盖有符号/无符号原生退出、超时日志、零退出但缺失/错误/布尔计数、
+合法合成响应、越权请求及外部文件拒绝、源文件不变与运行目录不可覆盖。
+
+真实复测工件 `outputs/yjk_background_probe_{01,02,03}/`：
+前两次分别核查ReadYdb和DbModel初始化，第三次经正式受控读取Adapter；
+均在ReadYdb附近以0xC0000005退出。第三次native_fault.log明确记录worker中ReadYdb的access violation，
+stdout表明SDK环境初始化成功后进入model_read。模型来源为 `yjk_api_roundtrip_03` 的几何骨架，
+仍不包含梁墙板工程对象。不可据此定位为驱动问题，也不可宣称后台分析或商业结果已验证。
+真实模型读回链路BLOCKED，完整模型/求解/结果提取未验证；本轮商业求解=0、OpenSees求解=0、学校API=0。
+
+旧分析脚本依赖软件运行时，提供可追溯命令序列；但忽略命令返回和完成状态。
+旧提取器会把缺失值替零、猜质量/位移角字段、去重接近周期，不能迁入作数值标签。
+具体来源哈希、API状态和后续处理见 `docs/yjk_cross_validation.md` 与 `configs/solver_inventory.json`。
+公开SDK声明存在ControlConfig.Invisible，不等于已验证隐藏宿主全链条；当前用户活动工程未被操作。
+
+验证命令：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_yjk_runtime.py
+.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -c "from pathlib import Path; from struct_agent.adapters.yjk_runtime import YJKRuntimeConfig, probe_model_read; result=probe_model_read(Path('outputs/yjk_api_roundtrip_03/project/dtlmodel.ydb'), Path('outputs/yjk_background_probe_03'), YJKRuntimeConfig(install_root=Path('D:/Softwares/YJKS_8_0_0'))); print(result.model_dump_json(indent=2))"
+```
+
+目标测试9 passed，1.28s；全套115 passed、17 skipped、1 warning，8.86s。
+17项仍为默认关闭的本地真实测试；合成子进程测试与上述真实SDK失败记录分开保存。
+实际探针命令父进程正常保存PROCESS_ERROR结果，不等于子进程成功；不覆盖既有运行目录复跑。
+下一最小任务：核实专用独立宿主的初始化与非交互加载脚本方式，解决模型读回，
+再补全本例梁墙板/28层模型并检查本次分析完成和结果契约，随后开展数值交叉验证。
