@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "case_id": "residential_001",
+  "condition_id": "residential_001_12_story_crosscheck_smoke",
+  "purpose": "CAUSE_ISOLATION_NOT_CALIBRATION",
+  "production_analysis_signature": "e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62",
+  "production_implementation_changed": false,
+  "artifacts": {
+    "cause_results": {
+      "path": "outputs/current/exceedance_causes_01/results.json",
+      "sha256": "bae8eed19633485ddffc076a9b7055e44c54e949b9283c99032f9c02a7508e54"
+    },
+    "cause_manifest": {
+      "path": "outputs/current/exceedance_causes_01/manifest.json",
+      "sha256": "1d6118555c87d298994b511a7ce29d7c1fd322b3bfcd9707ed800e585905dd3b"
+    },
+    "cause_source_snapshot": {
+      "path": "outputs/current/exceedance_causes_01/source_snapshot.json",
+      "sha256": "c8e25101168396f206ac676fe4ec840724e307dd670da9add7603c30df35176a"
+    },
+    "report": {
+      "path": "outputs/reports/exceedance_causes_01/report.md",
+      "sha256": "78bcfc5716a70f98636352c0863e5302435612420e1896c0b1962afe2b54509d"
+    },
+    "wall_beam_shell_result": {
+      "path": "outputs/current/exceedance_wall_beam_shell_01/result.json",
+      "sha256": "fc96871ae8d64c814955bddbeea9db937d4b16501ed93fb45dccb00f21864d79"
+    },
+    "wall_beam_shell_effect": {
+      "path": "outputs/reports/exceedance_wall_beam_shell_01/cause_effect.json",
+      "sha256": "a000daf5d5db93ee8dcdcaf500783e4eccbcbf9d9aada9c8baece1440454eb1a"
+    },
+    "connection_audit": {
+      "path": "outputs/current/connection_audit_02/connections.json",
+      "sha256": "5ede5bb9a23b13eefb1d81f2f4db77ac4488b2dc1710c437f004048ec1e99957"
+    },
+    "connection_outcome": {
+      "path": "outputs/current/connection_audit_02/outcome.json",
+      "sha256": "179cb17d20c9047d2e5ef649d3550252543e81ccbe819b5c94aafb30198b2c7e"
+    },
+    "connection_source_snapshot": {
+      "path": "outputs/current/connection_audit_02/source_snapshot.json",
+      "sha256": "7e008958c39d1038890eaf11c96b1865deaf022001fc3c8e4ed46636c246f1e6"
+    },
+    "first_audit_notice": {
+      "path": "outputs/current/connection_audit_01/stderr.log",
+      "sha256": "ccf9f6c96984569680a96b635032a5ce8c8fe806b8fe95318981701bec57e78d"
+    },
+    "comparisons\\residential_midpoint\\comparison.json": {
+      "path": "outputs/current/exceedance_causes_01/comparisons/residential_midpoint/comparison.json",
+      "sha256": "d9aba395b32d9358ad4d69fb676f6ca8ff32c5ca2b4d374d3356def88792dab4"
+    },
+    "comparisons\\residential_midpoint_fine\\comparison.json": {
+      "path": "outputs/current/exceedance_causes_01/comparisons/residential_midpoint_fine/comparison.json",
+      "sha256": "210c749b74af3ced6f5d82a9fcddc0a7db83a1c1429067983b856642f7701b0b"
+    },
+    "comparisons\\residential_nu_match\\comparison.json": {
+      "path": "outputs/current/exceedance_causes_01/comparisons/residential_nu_match/comparison.json",
+      "sha256": "d223dc7200728a72f90553634c508255c60a653c6d677afb1f781398823b30d4"
+    },
+    "comparisons\\residential_shell_coarse\\comparison.json": {
+      "path": "outputs/current/exceedance_causes_01/comparisons/residential_shell_coarse/comparison.json",
+      "sha256": "2152886e026b363caedfacbd855e18c4c99c62eff874d259cbe0d86ca6d4b145"
+    },
+    "comparisons\\residential_shell_fine\\comparison.json": {
+      "path": "outputs/current/exceedance_causes_01/comparisons/residential_shell_fine/comparison.json",
+      "sha256": "18766dbde9261ccd123fc6c739074626af252ed7e77ddd0a9b067f5f48976df1"
+    },
+    "comparisons\\T_fibers4\\comparison.json": {
+      "path": "outputs/current/exceedance_causes_01/comparisons/T_fibers4/comparison.json",
+      "sha256": "3d79ec6d2c48a52f398797e86271114a836f0f853be23aa911f2c281d76679ef"
+    },
+    "comparisons\\T_midpoint\\comparison.json": {
+      "path": "outputs/current/exceedance_causes_01/comparisons/T_midpoint/comparison.json",
+      "sha256": "cd3ce2ecc2dcae2de41407cd853caeed2ba8b521f544b57889c32ad87f1bff70"
+    },
+    "comparisons\\T_shell\\comparison.json": {
+      "path": "outputs/current/exceedance_causes_01/comparisons/T_shell/comparison.json",
+      "sha256": "c4a6fc4fbbabeaae480a9a93324dcab3d50d15fbdbdc423e3bb6454a97f851ec"
+    }
+  },
+  "geometry_audit": {
+    "layout": "outputs/current/residential_001/layout.json",
+    "sha256": "bfbf0d143723c13748f176a5a196f46116d5473493b142a89412325caabb4b42",
+    "intersection_tolerance_m": 1e-06,
+    "unnoded_plan_intersections": 0,
+    "positive_length_overlaps": 0,
+    "analysis_wall_segments": 162,
+    "segments_shorter_than_0_1_m": 13,
+    "segments_shorter_than_0_2_m": 35,
+    "minimum_length_m": 0.026999999999986812
+  },
+  "retained_issues": [
+    {
+      "operation": "supplementary wall-beam script input read",
+      "error_type": "UnicodeDecodeError",
+      "message": "gbk cannot decode byte 0xaf at position 17971",
+      "solver_started": false,
+      "resolution": "Explicit UTF-8, rerun succeeded"
+    },
+    {
+      "operation": "connection_audit_01 copied EDB open",
+      "status": "SUCCESS_WITH_NATIVE_MISSING_CACHE_NOTICE",
+      "message": "Cannot open inspection.Y_",
+      "source_model_changed": false,
+      "resolution": "Copy source Y* caches, connection_audit_02 succeeded with empty stderr"
+    }
+  ],
+  "engineering_feasibility": "NOT_EVALUATED"
+}

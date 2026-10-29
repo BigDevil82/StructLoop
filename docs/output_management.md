@@ -25,6 +25,8 @@ outputs/
 | 单墙正式原生证据 | `outputs/current/single_wall_12_02/`（10个ETABS、12个OpenSees工况） |
 | 结构批量对照与5%逐项判定 | `outputs/reports/structural_comparison_01/`，索引 `configs/structural_comparison_evidence.json` |
 | L/T形墙、墙梁组合原生证据及整栋归档输入副本 | `outputs/current/structural_comparison_01/` |
+| 结构超限归因 | `outputs/reports/exceedance_causes_01/`，详细结论 `docs/exceedance_causes.md`，索引 `configs/exceedance_causes_evidence.json` |
+| 梁墙壳替换补充及ETABS只读连接设置 | `outputs/{current,reports}/exceedance_wall_beam_shell_01/`、`outputs/current/connection_audit_{01,02}/` |
 | 全部38个已完成运行 | `outputs/archive/evidence_20261029.zip`，原始目录名保持不变 |
 
 归档整理时建立的当前输入、回归文件和原两份报告是逐字节副本，不是重新求解结果。

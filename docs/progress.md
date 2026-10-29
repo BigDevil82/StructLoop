@@ -43,7 +43,44 @@
 完整负面发现、控制组和两端原始结果均保留，见 `x_displacement_checks.md` 与 `outputs/reports/x_displacement/report.md`。
 不得把细网格某次结果指定为真值或直接写入GA/代理标签。
 
-## 本批任务：5%规则及结构层面批量比对
+## 本批任务：结构超限原因检查
+
+起点31a5160，工作区干净。仅检查原超限项，原通过项不重开；没有修改生产参数或重训模型。
+
+- 扩展 `reference_mesh.py` 的诊断选项，新增 `exceedance_causes.py`，复用真实ETABS工件完成8组成组OpenSees反事实，
+  另补1组墙梁壳替换。改变的是积分/单元假设，不改E、墙厚、荷载和源图，不生成生产标签。
+- 重要原因已量化：c=0.4的独立离散积分对首层偏差+19.31%、屋顶仅+2.35%；
+  T形墙中点诊断使首层X/Y差9.42%/22.63%→0.36%/3.85%，屋顶5.64%/5.81%→3.60%/3.21%。
+  原86项超限中76项在探针里进入5%，剩余10项为耦合量；不能据此直接修改生产c（官方仍推荐0.4）。
+- 整栋粗网格首层X/Y差21.35%/22.44%→8.23%/8.04%，说明积分效应解释大部分低层偏差，但不是全部原因。
+  细网格中点、面外nu对齐都不能解释原13%–15%的屋顶差；T纤维×4也只改变很小幅度。
+- 壳替换在无梁T形墙接近ETABS，在有梁组合首层Y差0.52%、X却110.15%，整栋同样未改善；
+  支持将梁端弯矩—墙节点转角耦合作为首要剩余嫌疑，尚未定位到具体钻转刚度/端区项。
+  全部不利反事实保留，未以“换壳”宣称修复。近零耦合分母解释极大百分比，但仍保留5%超限判定。
+- 新增类型化 `connection_audit.py`，在专用实例只读检查12根梁：形心插入、零显式偏移、无释放、局部轴角0；
+  AutoOffset开启，输入读回的0值不能等同已解析端区，后续仍需核实该项。
+  无求解/保存，源EDB及第二轮源缓存哈希不变。完整平面审查未见未共节点交叉或正长度重叠。
+- 初次补充脚本默认GBK读取JSON失败，求解前已停止，改UTF-8后成功；首次连接审查因缺少副本Y_缓存出现原生提示，
+  补复制Y*后在新目录复查成功、stderr为空。首轮日志与处理记录保留，不混作结构求解失败。
+- 工件/报告为 `outputs/{current,reports}/exceedance_causes_01/`、`exceedance_wall_beam_shell_01/`，
+  只读证据 `outputs/current/connection_audit_{01,02}/`；索引 `configs/exceedance_causes_evidence.json`。
+  结论与适用范围见 `docs/exceedance_causes.md`。生产物理指纹仍e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62。
+
+验证命令：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_exceedance_causes.py tests/unit/test_connection_audit.py tests/integration/test_structural_subsystem.py tests/integration/test_substructure_convergence.py --run-real
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.exceedance_causes --run outputs/current/exceedance_causes_01 --report outputs/reports/exceedance_causes_01
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.connection_audit --model outputs/current/structural_comparison_01/etabs/wall_beam/model.EDB --run outputs/current/connection_audit_02
+.venv/Scripts/python.exe -m pytest -q
+git diff --check
+```
+
+目标14 passed（0.67s）；默认152 passed、30 skipped、1个既有PyG弃用提示（23.25s）。
+真实探针及只读审查完成；未调用学校LLM、GA、训练或YJK。
+18个证据索引、142个主探针执行快照及143个只读审查执行/当前源码哈希核验通过；暂存差异检查通过。
+
+## 上一批：5%规则及结构层面批量比对（31a5160）
 
 起点d0e17ed，工作区干净。用户要求加快进度，取消单墙水平离散/泊松补查，采用小于5%即通过并关闭的原则。
 AGENTS第6/11条、PLAN及ROADMAP已同步该明确授权，不再逐个小任务交付。
@@ -117,7 +154,8 @@ ETABS正式复跑176.47s，状态SUCCESS仅指工况及响应检查，不是跨�
 
 ## 后续批次
 
-集中处理结构比对中达到5%的项目：整栋低层/层间响应、细化网格差异及T形墙连接运动学。
+保持原质量、加载点和截面，成组隔离梁墙节点的弯矩/转角传递，核查分析线单元实际端区或显式关闭自动端区作对照。
+据此定位整栋细网格超限的剩余原因；不直接用中点或换壳反事实替换生产方案。
 已通过单墙、子系统周期及主响应不再核查校准；不再进行单墙水平离散/泊松补查。
 之后补重力/地震谱/组合和规范配筋独立复核。
 分析基础与几何受理问题解决后，才进入正式优化、代理兼容性验证及等预算策略比较。

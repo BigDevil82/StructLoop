@@ -65,3 +65,6 @@ git diff --check
 重跑须替换为全新的运行/报告目录。配置为 `configs/structural_comparison.json`。
 目标测试27 passed（0.52s）；默认全量146 passed、29 skipped、1个既有PyG弃用提示（8.92s）。
 新增测试覆盖严格5%边界、零/小量、无效响应、源构件/条件隔离、逐层与层间差异，以及真实OpenSees L形墙。
+
+后续已完成[超限原因检查](exceedance_causes.md)：MVLEM转动中心的离散积分能解释T形墙和整栋低层差异的大部分，
+细化整栋剩余差异指向梁墙连接/单元运动学。反事实仅用于归因，不改写本报告或生产参数，原通过项保持关闭。

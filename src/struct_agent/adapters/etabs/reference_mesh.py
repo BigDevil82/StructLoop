@@ -1,9 +1,9 @@
 """Diagnostic-only MVLEM refinement. Physical stories, beams and masses stay fixed."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from struct_agent.schemas.base import Contract
 
@@ -12,6 +12,16 @@ class ReferenceMesh(Contract):
     vertical_subdivisions: int = Field(default=1,ge=1,le=4)
     fiber_refinement: int = Field(default=1,ge=1,le=4)
     rebuild_walls: bool = False
+    wall_formulation: Literal['mvlem', 'shell_dkgq'] = 'mvlem'
+    center_of_rotation: Literal[0.4, 0.5] = 0.4
+    plate_poisson: float | None = Field(default=None, ge=0., lt=.5)
+
+    @model_validator(mode='after')
+    def applicable_options(self) -> ReferenceMesh:
+        if self.wall_formulation == 'shell_dkgq' and (self.center_of_rotation != .4
+                or self.plate_poisson is not None or self.fiber_refinement != 1):
+            raise ValueError('MVLEM-specific options cannot be applied to a shell diagnostic')
+        return self
 
 
 def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
@@ -50,13 +60,21 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
         sections.append(count*mesh.fiber_refinement)
         ops.remove('element',unit.element_tags[0])
     for story,profile in enumerate(profiles,1):
-        ops.uniaxialMaterial('Elastic',1000000+story,float(profile.material.E))
+        if mesh.wall_formulation == 'mvlem':
+            ops.uniaxialMaterial('Elastic',1000000+story,float(profile.material.E))
+        else:
+            e, g = float(profile.material.E), float(profile.material.G)
+            # Same membrane thickness and 0.63^3 plate bending multiplier as
+            # ETABS ShellThin. This is a diagnostic element substitution only.
+            ops.section('ElasticMembranePlateSection',3000000+story,e,e/(2*g)-1,
+                profile.section.wall_thickness,0.,.63**3)
     mapping = []
     for index,(unit,count) in enumerate(zip(units,sections)):
         profile = profiles[unit.story-1]
         h = unit.story_height/mesh.vertical_subdivisions
         shear_tag = 2000000+index
-        ops.uniaxialMaterial('Elastic',shear_tag,wall_shear_stiffness(unit.member.length,unit.thickness,h,float(profile.material.G)))
+        if mesh.wall_formulation == 'mvlem':
+            ops.uniaxialMaterial('Elastic',shear_tag,wall_shear_stiffness(unit.member.length,unit.thickness,h,float(profile.material.G)))
         levels = []
         for step in range(mesh.vertical_subdivisions+1):
             pair = []
@@ -80,12 +98,18 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
         for bottom,top in zip(levels,levels[1:]):
             tag = next_element
             next_element += 1
-            ops.element('MVLEM_3D',tag,bottom[0],bottom[1],top[1],top[0],count,
-                '-thick',*([unit.thickness]*count),'-width',*([unit.member.length/count]*count),'-rho',*([0.01]*count),
-                '-matConcrete',*([1000000+unit.story]*count),'-matSteel',*([1000000+unit.story]*count),'-matShear',shear_tag,'-CoR',.4)
+            corners = (bottom[0],bottom[1],top[1],top[0])
+            if mesh.wall_formulation == 'shell_dkgq':
+                ops.element('ShellDKGQ',tag,*corners,3000000+unit.story)
+            else:
+                poisson = [] if mesh.plate_poisson is None else ['-Poisson',mesh.plate_poisson]
+                ops.element('MVLEM_3D',tag,*corners,count,
+                    '-thick',*([unit.thickness]*count),'-width',*([unit.member.length/count]*count),'-rho',*([0.01]*count),
+                    '-matConcrete',*([1000000+unit.story]*count),'-matSteel',*([1000000+unit.story]*count),
+                    '-matShear',shear_tag,'-CoR',mesh.center_of_rotation,*poisson)
             tags.append(tag)
         mapping.append({'story':unit.story,'source_id':unit.wall_id,'original_tag':unit.element_tags[0],
-            'new_element_tags':tags,'fibers_per_section':count})
+            'new_element_tags':tags,'fibers_per_section':count if mesh.wall_formulation == 'mvlem' else None})
     actual = set(ops.getEleTags())
     if not beams.issubset(actual) or len(actual)!=len(beams)+len(units)*mesh.vertical_subdivisions:
         raise ValueError('Refinement lost or duplicated a physical member')

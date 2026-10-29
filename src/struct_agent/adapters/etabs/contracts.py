@@ -103,9 +103,22 @@ class StructuralBatchSettings(Contract):
     selections: tuple[SubstructureSelection, ...] = Field(min_length=1, max_length=3)
 
 
+class ConnectionAuditSpec(Contract):
+    """Read-only connection queries on a copied, hash-bound diagnostic EDB."""
+    kind: Literal['connection_audit'] = 'connection_audit'
+    model: Path
+    model_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+    @model_validator(mode='after')
+    def edb_only(self) -> ConnectionAuditSpec:
+        if not self.model.is_absolute() or self.model.suffix.lower() != '.edb':
+            raise ValueError('An absolute EDB path is required')
+        return self
+
+
 class ETABSRequest(Contract):
     config: ETABSConfig
-    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec = Field(discriminator='kind')
+    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec = Field(discriminator='kind')
 
     @model_validator(mode='after')
     def theory_scope(self) -> ETABSRequest:
