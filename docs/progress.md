@@ -823,3 +823,38 @@ stdout表明SDK环境初始化成功后进入model_read。模型来源为 `yjk_a
 按用户要求暂停后台自动接入，避免继续为未打通路线增加代码。
 下一最小任务回到短墙/短梁几何修复与现有后端的确定性验证；盈建科人工交叉复核尚未开展，
 自动接入待厂商可工作的运行环境/基线明确后再恢复，不作为主线继续推进的前置条件。
+
+## 2026-10-29：Phase 4 ETABS复核能力与既有脚本审计
+
+用户询问ETABS配筋计算及用于独立复核的可行性。本轮仅审计，不启动/附着软件、不运行结构分析。
+注册表确认ETABS 18.1.0，安装于 `C:/Program Files/Computers and Structures/ETABS 18`。
+找到上游 `pipelines/structural/etabs/create_etabs_model.py` 和 `etabs_util.py`，只读检查，未修改旧工程。
+源文件与本机ETABSv1.dll、CHM帮助文件SHA256已记录在 `configs/solver_inventory.json`。
+
+用既有SDK Python的CLR读取已安装ETABSv1.dll公开.NET元数据，未导入YJKAPI或构造ETABS COM对象：
+确认DesignConcrete.StartDesign、GetSummaryResultsBeam/Column、Chinese_2010属性；
+DesignShearWall包含GetPierSummaryResults、GetSpandrelSummaryResults、GetRebar及两个配筋偏好查询，
+只有这5个方法，没有StartDesign。cDesignResults也仅有DesignForces属性。
+确认DatabaseTables读取表格接口，cOAPI声明启动、隐藏及退出能力；声明存在不等于实际授权/调用通过。
+当前主环境没有comtypes，未安装新依赖或把YJK环境作为ETABS正式依赖。
+
+CSI文档确认软件支持混凝土框架与墙肢/连梁设计；本机中国规范与授权可用性尚未验证。
+首条候选路线为API建模/分析→界面触发墙设计→API/官方表格读取结果，不宣称18.1墙设计可全后台触发。
+旧脚本默认附着活动实例、硬编码旧工程参数，质量源/工况依赖人工设置；不可整体迁入。
+发现StoryDrifts将Direction字符串数组与Drift数值数组错当X/Y位移角，
+且读取模态后未按注释重选漂移工况。公开文档与本机签名一致，后续最小迁移必须修正，不能用原提取结果作基准。
+
+新增 `docs/etabs_cross_validation.md`，说明能力、API边界、源代码问题及对照顺序。
+下一最小任务是独立ETABS小模型的启动/保存/求解/状态与结果读取，随后界面墙设计核对配筋契约；
+先验证解析基准和基础力学，再进入默认住宅对照，不直接重跑整楼GA或改变CASINO标签。
+本轮商业求解=0、OpenSees求解=0、学校API=0；无ETABS结果工件或已通过的交叉验证声明。
+
+目标核验命令为SDK Python通过System.Reflection.Assembly.LoadFrom读取上述固定ETABSv1.dll，
+检查cSapModel、cDesignConcrete、cDesignShearWall、cDesignResults、cDatabaseTables及StoryDrifts的公开签名；exit=0。
+配置JSON解析与版本断言通过。无新增业务代码，因此没有新增镜像式测试；仓库回归命令：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q
+```
+
+结果115 passed、17 skipped、1 warning（现有PyG弃用提示）。17项仍为默认关闭的本地真实测试。

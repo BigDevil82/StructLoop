@@ -1,5 +1,39 @@
 {
   "audit_date": "2026-10-29",
+  "etabs": {
+    "product": "ETABS 18",
+    "installed_version": "18.1.0",
+    "install_root": "C:/Program Files/Computers and Structures/ETABS 18",
+    "license": "NOT_VALIDATED",
+    "api_metadata": "VERIFIED_FROM_INSTALLED_PUBLIC_INTERFACES",
+    "application_start": "NOT_VALIDATED",
+    "model_export": "NOT_VALIDATED",
+    "analysis": "NOT_VALIDATED",
+    "design_results": "NOT_VALIDATED",
+    "concrete_frame_start_design_declared": true,
+    "wall_design_result_queries_declared": ["GetPierSummaryResults", "GetSpandrelSummaryResults", "GetRebar"],
+    "wall_start_design_method_in_installed_interface": false,
+    "chinese_2010_frame_api_declared": true,
+    "chinese_wall_design_runtime_available": "NOT_VALIDATED",
+    "references": {
+      "api_assembly": {
+        "path": "C:/Program Files/Computers and Structures/ETABS 18/ETABSv1.dll",
+        "sha256": "a68d1c310c00e1b7749a075d3529a888317920b56eff5c792dd6e49aeb6a4e89"
+      },
+      "api_help": {
+        "path": "C:/Program Files/Computers and Structures/ETABS 18/CSi API ETABS v1.chm",
+        "sha256": "e6ac0608dbbd7738b99f99c441074781b8a4457bdeb06c2c24ebe8f4320ac4b7"
+      },
+      "upstream_model_script": {
+        "path": "E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf/pipelines/structural/etabs/create_etabs_model.py",
+        "sha256": "511733e1f9c0987fbfa2792f95cef5171b2d473e2d3dac7a4c7484b54f6e7450"
+      },
+      "upstream_utilities": {
+        "path": "E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf/pipelines/structural/etabs/etabs_util.py",
+        "sha256": "1abdbc75411591e21ca88d6b8847e6cb138f9ea55bc40d881533da8527305042"
+      }
+    }
+  },
   "yjk": {
     "product": "YJK 2025 V8.0.0",
     "install_root": "D:\\Softwares\\YJKS_8_0_0",
