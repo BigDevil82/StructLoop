@@ -1,5 +1,9 @@
 # 计算逻辑修正（2026-10-28）
 
+> 2026-10-29 ETABS独立对照新增修正：矩形梁Saint-Venant扭转常数、MVLEM剪切弹簧N/m单位及逐墙片5GA/(6h)、最少8宏纤维。
+> 当前计算指纹为e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62；此前 `_04/_05/_06` 记录均为历史数据。
+> 现用12层真实回归由 `configs/real_fea_reference.json` 绑定；独立对照证据、适用边界及未解决差异见 `etabs_cross_validation.md`。
+
 > 2026-10-29补充：材料估算错误继续修正，当前独立诊断为 `member_diagnostics_{baseline,symmetry}_05`。
 > 本文 `_04` 的力学诊断保留为历史工件，材料标签不能直接用于当前优化。详见 `optimization_iteration.md`。
 > 后续墙肢设计单位修正及“短墙转梁”撤销见 `model_semantics.md`；当前固定输入诊断为 `_06`。

@@ -1,17 +1,21 @@
 {
   "audit_date": "2026-10-29",
   "etabs": {
-    "product": "ETABS 18",
-    "installed_version": "18.1.0",
+    "product": "ETABS Ultimate 64-bit",
+    "installed_version": "18.1.0 Build 2117 (Analysis Build 9774/64)",
     "install_root": "C:/Program Files/Computers and Structures/ETABS 18",
-    "license": "NOT_VALIDATED",
+    "license": "VERIFIED_FOR_LINEAR_STATIC_AND_MODAL_API_RUNS",
     "api_metadata": "VERIFIED_FROM_INSTALLED_PUBLIC_INTERFACES",
-    "application_start": "NOT_VALIDATED",
-    "model_export": "NOT_VALIDATED",
-    "analysis": "NOT_VALIDATED",
+    "application_start": "VERIFIED_DEDICATED_INSTANCE",
+    "model_export": "VERIFIED_12_STORY_COUNTS_AND_COORDINATES",
+    "analysis": "VERIFIED_ELASTIC_LATERAL_AND_MODAL_ONLY",
     "design_results": "NOT_VALIDATED",
     "concrete_frame_start_design_declared": true,
-    "wall_design_result_queries_declared": ["GetPierSummaryResults", "GetSpandrelSummaryResults", "GetRebar"],
+    "wall_design_result_queries_declared": [
+      "GetPierSummaryResults",
+      "GetSpandrelSummaryResults",
+      "GetRebar"
+    ],
     "wall_start_design_method_in_installed_interface": false,
     "chinese_2010_frame_api_declared": true,
     "chinese_wall_design_runtime_available": "NOT_VALIDATED",
@@ -32,6 +36,23 @@
         "path": "E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf/pipelines/structural/etabs/etabs_util.py",
         "sha256": "1abdbc75411591e21ca88d6b8847e6cb138f9ea55bc40d881533da8527305042"
       }
+    },
+    "verification": {
+      "case_id": "residential_001",
+      "stories": 12,
+      "spec": "configs/etabs_12_story_spec.json",
+      "spec_sha256": "6b7c7e71f461caf2ecfcdef59ccd08c5c4255b2f0403cc5f3808410b9d35e0e7",
+      "cantilever_run": "outputs/etabs_cantilever_04",
+      "residential_run": "outputs/etabs_residential_12_05",
+      "model_sha256": "898c7857ca08e6d4255ba593851bb77d035ca93bc195d2c23c940ee7d238a615",
+      "comparison": "outputs/etabs_comparison_12_02",
+      "wall_panels": 1944,
+      "beam_objects": 972,
+      "point_objects": 2617,
+      "maximum_coordinate_error_m": 7.105427357601002e-15,
+      "minimum_12_mode_mac": 0.9903865063761396,
+      "engineering_feasibility": "NOT_EVALUATED",
+      "reinforcement": "NOT_EVALUATED"
     }
   },
   "yjk": {
@@ -92,7 +113,11 @@
     "bounded_retry": {
       "status": "SUSPENDED_UNRESOLVED",
       "user_instruction": "Retry once; stop pursuing if the integration cannot be established",
-      "runs": ["outputs/yjk_final_attempt_01", "outputs/yjk_final_attempt_02", "outputs/yjk_vendor_sample_read_01"],
+      "runs": [
+        "outputs/yjk_final_attempt_01",
+        "outputs/yjk_final_attempt_02",
+        "outputs/yjk_vendor_sample_read_01"
+      ],
       "official_version_branch": "8.0",
       "official_control_blob": "76dec1b36a3ab3c460bf46df19ca7525dad8fd07",
       "official_link_blob": "ce30d319bfa498f7c2054bc968fd2f722e7e6ce5",

@@ -25,6 +25,9 @@ def test_t_wall_assembly_retains_all_mesh_nodes_elements_and_mass(spec: ProjectS
     try:
         build = MVLEMFrameBuilder(logging.getLogger('test')).build(topology, config)
         assert len(build.wall_mesh_element_units) == len(ops.getEleTags()) == 9
+        # Short panels must retain a bending-resolved section, not one axial
+        # centroid fiber with zero in-plane bending inertia.
+        assert len(ops.eleResponse(1,'Fiber_Strain')) >= 8
         assert len(build.wall_story_element_units) == 6
         assert sorted(tag for u in build.wall_story_element_units for tag in u.element_tags) == sorted(ops.getEleTags())
         for story in range(1,4):

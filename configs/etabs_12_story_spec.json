@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "condition_id": "residential_001_12_story_crosscheck_smoke",
+  "stories": 12,
+  "story_height_m": 2.9,
+  "slab_thickness_m": 0.12,
+  "intensity": 8.0,
+  "site_class": "II",
+  "seismic_group": 1,
+  "objective": "upstream_material_cost_cny",
+  "code_basis": "用户2026-10-29批准12层对照；其余沿用既有冒烟条件，不代表正式工程条件确认",
+  "design_variables": [
+    {
+      "name": "tw_bot",
+      "unit": "m",
+      "values": [
+        0.2,
+        0.25,
+        0.3,
+        0.35,
+        0.4
+      ]
+    },
+    {
+      "name": "tw_mid",
+      "unit": "m",
+      "values": [
+        0.16,
+        0.18,
+        0.2,
+        0.25,
+        0.3
+      ]
+    },
+    {
+      "name": "tw_top",
+      "unit": "m",
+      "values": [
+        0.16,
+        0.18,
+        0.2,
+        0.25
+      ]
+    },
+    {
+      "name": "hb_main",
+      "unit": "m",
+      "values": [
+        0.4,
+        0.5,
+        0.55,
+        0.6,
+        0.65,
+        0.7
+      ]
+    },
+    {
+      "name": "bb_main",
+      "unit": "m",
+      "values": [
+        0.2,
+        0.25,
+        0.3,
+        0.35
+      ]
+    },
+    {
+      "name": "hb_sec",
+      "unit": "m",
+      "values": [
+        0.3,
+        0.4,
+        0.45,
+        0.5
+      ]
+    },
+    {
+      "name": "bb_sec",
+      "unit": "m",
+      "values": [
+        0.2,
+        0.25,
+        0.3
+      ]
+    },
+    {
+      "name": "conc_bot",
+      "unit": "grade",
+      "values": [
+        "C30",
+        "C35",
+        "C40",
+        "C45",
+        "C50"
+      ]
+    }
+  ]
+}

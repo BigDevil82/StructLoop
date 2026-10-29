@@ -1,0 +1,18 @@
+{
+  "purpose": "same_implementation_regression_not_independent_validation",
+  "analysis_signature": "e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62",
+  "inputs": {
+    "layout": {
+      "path": "outputs/residential_001_rcgnn_03/layout.json",
+      "sha256": "bfbf0d143723c13748f176a5a196f46116d5473493b142a89412325caabb4b42"
+    },
+    "spec": {
+      "path": "configs/etabs_12_story_spec.json",
+      "sha256": "6b7c7e71f461caf2ecfcdef59ccd08c5c4255b2f0403cc5f3808410b9d35e0e7"
+    },
+    "analysis": {
+      "path": "outputs/opensees_residential_12_diagnostics_02/analyses/eval_00001.json",
+      "sha256": "750087acd868d52eacca56bd33bd987bee91494edc8412e357729f5533dd5a01"
+    }
+  }
+}

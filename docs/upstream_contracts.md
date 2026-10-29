@@ -76,3 +76,8 @@
   撤销短墙转梁；新生成图保留原类别并审查，真实GA拒绝尚未处理的极短物理墙肢。见 `docs/model_semantics.md`。
 - 本机已确认YJK 2025 V8.0.0与官方Python API，已成功导入，未验证授权或真实商业计算。
   入口声明、手册路径与哈希见 `configs/solver_inventory.json`。不把本地简化配筋视为YJK等价结果。
+- 后续ETABS 18.1.0已通过悬臂解析解及12层住宅弹性水平诊断；墙设计/配筋尚未实测。
+  适配器仅开放固定诊断请求，旧ETABS脚本没有整体迁入。见 `docs/etabs_cross_validation.md`。
+- ETABS核对暴露并修正矩形梁扭转常数、MVLEM剪切材料单位及墙片宏纤维离散问题。
+  旧28层物理结果不再作为当前回归，新12层指纹/输入哈希见 `configs/real_fea_reference.json`；
+  旧代理标签仍不得用于修正后的筛选，本轮没有训练/更新权重。

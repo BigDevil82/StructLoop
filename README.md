@@ -173,6 +173,14 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
   从磁盘恢复及工程人工审批界面尚未实现；同进程会话和已获批候选可继续执行。
 - 论文 Ours 的决策收益机制、正式对比及消融尚待研究设计与实验，不以冒烟替代科学结论。
 
+## ETABS验证
+
+ETABS小模型与12层住宅对照见 [docs/etabs_cross_validation.md](docs/etabs_cross_validation.md)。
+使用可选 `etabs` 依赖（Windows comtypes、psutil）；与OpenSees比较时还需现有 `runtime` 环境。
+固定入口为 `python -m struct_agent.etabs_cli`，只创建独立实例，不附着用户工程。
+12层条件独立保存在 `configs/etabs_12_story_spec.json`，原28层配置不变。
+当前只完成弹性水平诊断和解析解验证，尚未完成ETABS重力/反应谱/配筋复核，不能作为工程通过结论。
+
 ## Git 与本地数据
 
 本地仓库使用 `main` 分支。每次任务完成并验证后更新进度记录、检查暂存内容并提交；不自动推送远端。

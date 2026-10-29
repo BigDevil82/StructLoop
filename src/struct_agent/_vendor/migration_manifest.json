@@ -9,7 +9,8 @@
     "Objective summarization separated from FEA execution; formula unchanged",
     "Corrected signed combinations, absolute envelopes, local section forces, CQC frequency ratios, all-wall design and topology slivers; no legacy solver branch",
     "Corrected GA population accounting/elite allocation, feasibility-first ranking and feedback search; corrected idealized reinforcement takeoff and concrete density/price conversion",
-    "Assemble connected collinear wall panels into physical design piers before per-mode force extraction; preserve short-wall roles, introduce model preflight, preserve FE mesh/source mapping"
+    "Assemble connected collinear wall panels into physical design piers before per-mode force extraction; preserve short-wall roles, introduce model preflight, preserve FE mesh/source mapping",
+    "Correct MVLEM shear spring force/displacement units and per-panel geometry scaling; resolve short-panel section fibers; use Saint-Venant rectangle torsion"
   ],
   "files": [
     {
@@ -178,8 +179,8 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\builders\\mvlem_frame.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\builders\\mvlem_frame.py",
       "source_sha256": "841803c34b15bfa4a6a88871812874a0124c484161e8b52c24f8cd0a565fea98",
-      "destination_sha256": "502892fb41d42083b8fd2311c3de99be74c3b4f5e8bd273a8debdaf9348144a6",
-      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
+      "destination_sha256": "d27ca204a55251c006c43c8b658cbc5fa76a52af7415856d9a7cf6909f4955e5",
+      "local_corrections": "2026-10-29: panel shear material requires K=5GA/(6h) N/m; minimum 8 section fibers; rectangular Saint-Venant torsion series; see docs/etabs_cross_validation.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\builders\\base.py",

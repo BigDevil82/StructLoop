@@ -858,3 +858,99 @@ CSI文档确认软件支持混凝土框架与墙肢/连梁设计；本机中国�
 ```
 
 结果115 passed、17 skipped、1 warning（现有PyG弃用提示）。17项仍为默认关闭的本地真实测试。
+
+## 2026-10-29：Phase 4 ETABS解析基准与12层住宅真实对照
+
+用户批准先小模型、再用默认residential_001，住宅改为12层以降低求解时间。
+先读约定与旧ETABS脚本，新增最小 `adapters/etabs/`（类型化请求、COM检查、独立进程、解析基准、住宅输入/建模、OpenSees参考和MAC比较）
+及operator CLI `etabs_cli.py`。旧脚本未整体复制，未附着用户实例或修改旧工程。
+新增可选comtypes==1.4.17，复用既有psutil；uv安装并锁定版本，未增加LangGraph/商业Python库/绘图依赖。
+主环境无pip，首次pip安装命令失败后改用 `uv pip install --python .venv/Scripts/python.exe comtypes==1.4.17` 成功。
+
+独立worker固定支持cantilever/residential两种请求，没有任意脚本、shell或COM命令字段。
+非零返回码、空/错行结果、未完成工况显式失败；新运行目录保留请求、配置、日志、错误类型/栈及源代码快照。
+长计算使用冻结source目录及逐文件哈希，记录未提交工作区的实际执行代码，不只依赖Git基线号。
+父进程只清理由本次worker创建且匹配exe/PID/创建时间的实例；所有ETABS进程已清理。
+
+### 小模型与失败修复
+
+- `etabs_cantilever_01`：严格Path从JSON解析失败，未启动软件；改为嵌套Schema.model_validate_json并补回归。
+- `_02/_03`：静力成功，模态无有效质量，拦截为失败。点质量/质量源实际正确；
+  NewBlank默认楼层不在柱顶，质量默认向楼层集中。显式定义实际楼层后恢复。
+- `_04`：实际API建模、保存、静力、模态、读回均通过。
+  3m悬臂柱水平10kN，位移1.424250003mm，支座剪力10kN、弯矩30kNm，周期0.237122618855s；
+  与含剪切变形的解析解一致（该例验证相对容差1e-4）。保留两个重复水平周期，原生日志振型数量提示有物理解释。
+
+### 住宅12层：实际模型核对与差异
+
+`configs/etabs_12_story_spec.json` 新condition_id，原28层配置不变；其他条件仅沿用获准冒烟条件。
+本次真实输入为 `residential_001_rcgnn_03`，162墙段/81梁，12层×2.9m，
+墙厚200/160/160mm分区3/5/4层，主梁250×500mm、次梁300×400mm、C30。
+原短墙/梁全部保留以诊断，不视为通过几何前处理，不接入GA。
+
+- `etabs_residential_12_01`：重复定义默认P1墙肢标签返回非零，立即停止；改为读已有标签再建缺项。
+- `_02`：默认D1楼板约束重名返回非零，立即停止；新模型使用专用SL_D命名。
+- `_03`：首次完整求解与平衡通过，但ModeShape默认只返回第一阶；不能进行完整MAC匹配。
+- `_04`：显式选择全部振型，按官方模态表确认阶次，完整读取12阶；保留原生求解工件。
+- `_05`：最终追加逐对象/逐坐标核验与质量读回，用时91.42s；
+  1944壳对象、972梁对象、2617输入对象节点均覆盖，最大坐标差7.11e-15m；
+  实际分析网格2629节点、1944壳、972杆（另有12个软件内部楼板控制节点），原生日志无负刚度特征值及warning/error项。
+  两水平静力工况及模态状态均已完成，X/Y各六项整体平衡、响应有限性和正特征值检查通过。
+
+两端使用相同规定楼层质量/端点分布转动惯量与屋顶X/Y各1MN诊断力，刚性楼板，不加楼板弯曲刚度。
+这一协议只隔离弹性刚度/离散差异，不验证实际质量源、重力传荷或规范地震需求。
+`opensees_residential_12_{01,02}` 为两次独立参考运行，最终 `_02` 与ETABS `_05` 对照。
+新模块独立计算的质量与原建模器实际质量一致；两静力工况整体平衡通过。
+`etabs_comparison_12_02` 用质量加权MAC及一对一分配匹配12阶，最小MAC=0.9903865。
+首三阶周期ETABS/OpenSees分别0.408360/0.392128、0.367374/0.365395、0.297920/0.289176s。
+同一加载下屋顶主方向位移X为2.702472/2.447730mm（相对ETABS -9.43%），
+Y为2.714278/2.683477mm（-1.13%）；耦合位移及扭转差异全部保留。
+这是已获得独立数值参照，**不是全部误差验收通过**；报告状态为DIFFERENCES_REPORTED_NOT_ACCEPTANCE。
+EDB、原生日志、映射、逐层响应、全MAC矩阵和报告均在上述不可变运行目录。
+
+### 本地计算正确性修正
+
+截面核查和官方MVLEM源代码审计发现并修正：
+
+1. 矩形梁将Iy+Iz当扭转常数；改Saint-Venant矩形级数，检验单位方形J、四次方尺度和宽高互换。
+2. MVLEM剪切单轴材料输入位移、输出力，旧代码直接传剪切模量G，量纲不符；
+   改为每片墙 K=5GA/(6h) N/m，并用本机原生MVLEM在两种墙长下独立验证纯剪位移解析解。
+3. 1条形心宏纤维不能表达面内弯曲惯性；最少8纤维。此为离散修复，仍须纤维/网格收敛验证，不代替短物理墙肢处理。
+
+来源见 `docs/etabs_cross_validation.md`，官方.cpp只读快照及SHA256在 `etabs_mechanics_audit_01`。
+当前指纹e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62；迁移清单本地哈希同步。
+旧标签/权重未经验证不得筛选新结果，没有训练或修改RC-GNN/CASINO权重。
+`opensees_residential_12_diagnostics_{01,02}` 为修正期间的详细真实诊断，最终 `_02` 仍不可行：
+墙配筋55项失败、墙剪压3项失败、梁剪压16项失败（构件-楼层口径），无漏检。
+这不是ETABS设计结果；目前ETABS模型只有弹性参数和诊断工况，恒活载/反应谱/规范组合与配筋未验证。
+
+### 验证与回归基准
+
+当前真实回归由 `configs/real_fea_reference.json` 绑定12层输入、分析JSON哈希和实现指纹。
+提交前将新配置规范化为LF换行，并核对暂存内容哈希；原始执行字节保存在
+`etabs_comparison_12_02/spec_as_executed.json`，与历史运行manifest一致，JSON条件完全相同。
+普通入口与详细入口一致性目标仍保留。首次全真实测试145通过、2失败：
+两项旧构件覆盖测试仍硬编码旧28层 `_06` 指纹，正确拦截了过期标签。
+将其改为读取当前12层参考并按Spec逐层核验覆盖，不回写旧记录、不放宽数值/指纹判断，也不维持错误实现分支。
+旧两布局测试参数退役，当前构件覆盖测试1项，故测试总数减少1；并非跳过当前求解失败或删除失败构件。
+
+实际验证命令：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_etabs.py
+.venv/Scripts/python.exe -m pytest -q --run-real tests/unit/test_etabs.py tests/integration/test_mvlem_panel_mechanics.py tests/integration/test_opensees_beam_mechanics.py tests/integration/test_wall_pier_mechanics.py
+.venv/Scripts/python.exe -m pytest -q --run-real tests/integration/test_real_adapters.py::test_real_fea_matches_current_detailed_result
+.venv/Scripts/python.exe -m pytest -q --run-real tests/unit/test_etabs.py tests/integration/test_mvlem_panel_mechanics.py tests/integration/test_member_diagnostics.py tests/integration/test_real_adapters.py::test_real_fea_matches_current_detailed_result
+.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m pytest -q --run-real
+```
+
+目标力学/接口组合19 passed，当前参考/覆盖组合17 passed（14.89s）；
+默认全套127 passed、19 skipped、1 warning（13.11s），19项为默认关闭的真实测试。
+最终全套 `--run-real` 为146 passed、0 skipped、8 warnings，32.60s；提示均为既有PyG/ezdxf依赖弃用提示。
+
+真实ETABS调用由 `run_verification` 发起，运行配置与输入位于各目录request.json，
+对 `_01/_02` 住宅失败修复及后续重试的关系如上；CLI等价复现命令见etabs_cross_validation.md，不能覆盖旧目录复跑。
+本轮ETABS RunAnalysis实际6次（含两次无质量模态失败），学校LLM调用=0、GA=0。
+OpenSees额外建筑规模参考2次、详细诊断2次，普通入口真实复算由上述目标和全真实测试记录；小构件测试另计。
+下一最小任务是对墙梁子结构及离散尺度进行收敛核查，定位X向9.43%位移差异，再进入重力/反应谱与配筋独立复核。

@@ -10,8 +10,23 @@ def _beam_section_props(width: float, depth: float) -> tuple[float, float, float
     area = width * depth
     iy = width * depth ** 3 / 12.0
     iz = depth * width ** 3 / 12.0
-    j = iy + iz
+    # Saint-Venant torsion, not the polar second moment Iy+Iz. Exact rectangle
+    # series truncated after 128 odd terms (relative tail < 1e-9 for a square).
+    a, b = max(width,depth), min(width,depth)
+    series = sum(math.tanh(n*math.pi*a/(2*b))/n**5 for n in range(1,256,2))
+    j = a*b**3/3*(1-192*b/(math.pi**5*a)*series)
     return (area, j, iy, iz)
+
+
+def wall_shear_stiffness(length: float, thickness: float, height: float, shear_modulus: float) -> float:
+    """Rectangular elastic panel shear spring K=5GA/(6h), N/m (not Pa).
+
+    MVLEM_3D passes shear displacement to its uniaxial material and uses the
+    returned force directly. The axial/flexural materials instead use stress.
+    """
+    if any(not math.isfinite(v) or v<=0. for v in (length,thickness,height,shear_modulus)):
+        raise ValueError('Positive wall dimensions and shear modulus required')
+    return (5/6)*shear_modulus*length*thickness/height
 
 class MVLEMFrameBuilder(StructuralModelBuilder):
     """Equivalent wall-frame model with MVLEM_3D wall elements.
@@ -61,7 +76,7 @@ class MVLEMFrameBuilder(StructuralModelBuilder):
         plan_floor_nodes: dict[tuple[float, float, int], int] = {}
         fixed_base_nodes: set[int] = set()
         mat_tag = 1
-        mats_by_story: dict[int, tuple[int, int, int]] = {}
+        mats_by_story: dict[int, tuple[int, int]] = {}
         for story, profile in enumerate(profiles, start=1):
             e = float(profile.material.E)
             g = float(profile.material.G)
@@ -71,10 +86,7 @@ class MVLEMFrameBuilder(StructuralModelBuilder):
             steel_tag = mat_tag
             ops.uniaxialMaterial('Elastic', steel_tag, e)
             mat_tag += 1
-            shear_tag = mat_tag
-            ops.uniaxialMaterial('Elastic', shear_tag, g)
-            mat_tag += 1
-            mats_by_story[story] = (concrete_tag, steel_tag, shear_tag)
+            mats_by_story[story] = (concrete_tag, steel_tag)
 
         def floor_node(x: float, y: float, story: int, z: float) -> int:
             nonlocal node_tag
@@ -108,11 +120,17 @@ class MVLEMFrameBuilder(StructuralModelBuilder):
                         ops.fix(nj, 1, 1, 1, 1, 1, 1)
                         fixed_base_nodes.add(nj)
                     wall_base_units.append(WallBaseCheckUnit(wall_id=wall.m_id, base_nodes=[ni, nj], length=wall.length, thickness=t))
-                m = max(1, int(math.ceil(wall_len / self.fiber_width)))
+                # One centroid fiber has zero in-plane bending inertia. Keep a
+                # resolved section even for a short analysis mesh panel.
+                m = max(8, int(math.ceil(wall_len / self.fiber_width)))
                 width = [wall_len / m] * m
                 thick = [t] * m
                 rho = [self.rebar_ratio] * m
-                concrete_tag, steel_tag, shear_tag = mats_by_story[story]
+                concrete_tag, steel_tag = mats_by_story[story]
+                shear_tag = mat_tag
+                mat_tag += 1
+                ops.uniaxialMaterial('Elastic',shear_tag,wall_shear_stiffness(
+                    wall_len,t,profile.story_height,float(profile.material.G)))
                 concrete_tags = [concrete_tag] * m
                 steel_tags = [steel_tag] * m
                 ops.element('MVLEM_3D', elem_tag, ni, nj, nk, nl, m, '-thick', *thick, '-width', *width, '-rho', *rho, '-matConcrete', *concrete_tags, '-matSteel', *steel_tags, '-matShear', shear_tag, '-CoR', 0.4)

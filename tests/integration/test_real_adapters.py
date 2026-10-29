@@ -80,9 +80,13 @@ def test_scientific_algorithm_bodies_unchanged(relative: str,class_name: str) ->
 def test_real_fea_matches_current_detailed_result(tmp_path: Path) -> None:
     from struct_agent.adapters.fea import OpenSeesAdapter
     from struct_agent.adapters.physics import analysis_signature
-    layout = LayoutCandidate.model_validate_json(Path('outputs/residential_001_rcgnn_02/layout.json').read_text(encoding='utf-8'))
-    spec = ProjectSpec.model_validate_json(Path('configs/reference_spec.json').read_text(encoding='utf-8'))
-    data = json.loads(Path('outputs/member_diagnostics_baseline_06/analyses/eval_00001.json').read_text(encoding='utf-8'))
+    from struct_agent.io.artifacts import sha256
+    reference = json.loads(Path('configs/real_fea_reference.json').read_text(encoding='utf-8'))
+    for asset in reference['inputs'].values():
+        assert sha256(Path(asset['path'])) == asset['sha256'], 'Real regression input hash mismatch'
+    layout = LayoutCandidate.model_validate_json(Path(reference['inputs']['layout']['path']).read_text(encoding='utf-8'))
+    spec = ProjectSpec.model_validate_json(Path(reference['inputs']['spec']['path']).read_text(encoding='utf-8'))
+    data = json.loads(Path(reference['inputs']['analysis']['path']).read_text(encoding='utf-8'))
     assert data['analysis']['analysis_signature'] == analysis_signature(), 'BLOCKED: regenerate current corrected diagnostic reference'
     design = DesignCandidate.model_validate_json(json.dumps(data['design']))
     record = OpenSeesAdapter(log_directory=tmp_path/'logs').evaluate(layout,design,spec,evaluation_id='regression_01')
