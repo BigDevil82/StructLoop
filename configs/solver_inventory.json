@@ -53,6 +53,20 @@
       "minimum_12_mode_mac": 0.9903865063761396,
       "engineering_feasibility": "NOT_EVALUATED",
       "reinforcement": "NOT_EVALUATED"
+    },
+    "mesh_convergence": {
+      "status": "NOT_ESTABLISHED",
+      "case_id": "residential_001",
+      "stories": 12,
+      "report": "outputs/x_displacement_diagnosis_01/report.md",
+      "wall_vertical_subdivisions": [
+        1,
+        2,
+        4
+      ],
+      "beam_theory_for_mesh_study": "euler_comparison",
+      "engineering_acceptance": "NOT_VALIDATED",
+      "note": "Both backends show large vertical-mesh sensitivity. Previous coarse agreement is not convergence evidence."
     }
   },
   "yjk": {

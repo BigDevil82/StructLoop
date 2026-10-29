@@ -25,7 +25,8 @@ def main() -> int:
                 result = build_and_analyze(client, spec, directory)
             else:
                 from .residential import build_and_analyze as residential
-                result = residential(client,spec,directory)
+                result = residential(client,spec,directory,beam_theory=config.beam_theory,
+                    wall_vertical_subdivisions=config.wall_vertical_subdivisions)
         write_json(directory/'worker_result.json', {'status':'SUCCESS' if result['verified'] else 'INVALID_RESULT',
             'version':version, 'result':result})
         print('STAGE result_saved', flush=True)

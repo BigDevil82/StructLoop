@@ -13,22 +13,27 @@ from struct_agent.io.artifacts import create_run, write_json
 from .contracts import ResidentialSpec
 from .residential_input import prepare
 from .results import roof_equilibrium
+from .reference_mesh import ReferenceMesh,refine
 
 
-def run_reference(spec: ResidentialSpec, directory: Path) -> dict[str,Any]:
+def run_reference(spec: ResidentialSpec, directory: Path, *, mesh: ReferenceMesh | None=None) -> dict[str,Any]:
     import openseespy.opensees as ops
     from struct_agent.adapters.fea import native_topology, native_params
     from struct_agent.adapters.physics import analysis_signature
     from struct_agent._vendor.shearwall_modeling.builders.mvlem_frame import MVLEMFrameBuilder
     from struct_agent._vendor.shearwall_modeling.parametric.analysis import build_model_config_from_params
     directory = directory.resolve()
-    create_run(directory,seed=0,inputs={},config={'purpose':'ELASTIC_LATERAL_DIAGNOSTIC','spec':spec.model_dump(mode='json')})
+    mesh = mesh or ReferenceMesh()
+    create_run(directory,seed=0,inputs={},config={'purpose':'ELASTIC_LATERAL_DIAGNOSTIC',
+        'spec':spec.model_dump(mode='json'),'diagnostic_mesh':mesh.model_dump()})
     started = perf_counter()
     try:
         ops.logFile(str(directory/'opensees.log'),'-noEcho')
         data = prepare(spec)
         cfg = build_model_config_from_params(native_params(spec.design,spec.project),num_modes=12)
         build = MVLEMFrameBuilder(logging.getLogger('reference')).build(native_topology(data.layout),cfg)
+        mesh_info = refine(build,cfg,mesh)
+        write_json(directory/'mesh.json',mesh_info)
         masses = [ops.nodeMass(p,1) for p in build.master_nodes]
         inertia = [ops.nodeMass(p,6) for p in build.master_nodes]
         if any(not math.isclose(a,b,rel_tol=1e-10) for a,b in zip(masses,[f.mass_kg for f in data.floors])):
@@ -79,6 +84,7 @@ def run_reference(spec: ResidentialSpec, directory: Path) -> dict[str,Any]:
             'analysis_signature':analysis_signature(),'periods_s':periods,'floor_mode_shapes':shapes,
             'static':static,'checks':checks,'verified':all(all(c.values()) for c in checks.values()),
             'floor_inputs':[asdict(f) for f in data.floors], 'elapsed_s':perf_counter()-started,
+            'diagnostic_mesh':mesh.model_dump(),
             'engineering_feasibility':'NOT_EVALUATED','reinforcement':'NOT_EVALUATED'}
         write_json(directory/'result.json',result)
         return result

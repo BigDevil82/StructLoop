@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from struct_agent.io.artifacts import write_json
 from .client import ETABSClient, rows
@@ -14,10 +14,22 @@ from .results import roof_equilibrium
 DISPLACEMENT_FIELDS = ('object','element','case','step_type','step','u1','u2','u3','r1','r2','r3')
 
 
-def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Path) -> dict[str,Any]:
+def beam_modifiers(theory: Literal['timoshenko','euler_comparison']) -> list[float]:
+    """One-factor diagnostic: only shear deformation is suppressed, not EI/GJ."""
+    if theory not in ('timoshenko','euler_comparison'):
+        raise ValueError('Unknown beam comparison theory')
+    scale = 1. if theory=='timoshenko' else 1e6
+    return [1.,scale,scale,1.,1.,1.,1.,1.]
+
+
+def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Path, *,
+                      beam_theory: Literal['timoshenko','euler_comparison']='timoshenko',
+                      wall_vertical_subdivisions: int=1) -> dict[str,Any]:
     from struct_agent.adapters.fea import native_topology
     from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers
     data = prepare(spec)
+    if not 1<=wall_vertical_subdivisions<=4:
+        raise ValueError('Bounded wall subdivision count required')
     m, call, v = client.model, client.call, spec.design.values
     call('InitializeNewModel',m.InitializeNewModel,10)
     call('NewBlank',m.File.NewBlank)
@@ -31,6 +43,10 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     for role in ('primary','secondary'):
         suffix = 'main' if role=='primary' else 'sec'
         call('BeamSection '+role,m.PropFrame.SetRectangle,role,'COMMON_ELASTIC',float(v['hb_'+suffix]),float(v['bb_'+suffix]))
+        call('BeamModifiers '+role,m.PropFrame.SetModifiers,role,beam_modifiers(beam_theory))
+    modifiers = {role:call('ReadBeamModifiers '+role,m.PropFrame.GetModifiers,role)[0] for role in ('primary','secondary')}
+    if any(list(value)!=beam_modifiers(beam_theory) for value in modifiers.values()):
+        raise ValueError('Beam theory modifier readback mismatch')
     for thickness in sorted({f.wall_thickness_m for f in data.floors}):
         prop = f'W{round(thickness*1000)}'
         call('WallSection '+prop,m.PropArea.SetWall,prop,1,1,'COMMON_ELASTIC',thickness)
@@ -49,6 +65,12 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
             nodes[level,point] = name
             if level==0:
                 call('BaseFix',m.PointObj.SetRestraint,name,[True]*6)
+    for story in range(1,n+1):
+        for step in range(1,wall_vertical_subdivisions):
+            level = story-1+step/wall_vertical_subdivisions
+            for point in sorted(wall_points):
+                name, = call('AddInternalWallNode',m.PointObj.AddCartesian,*point,level*spec.project.story_height_m,'')
+                nodes[level,point] = name
     masters, mapping = [], []
     for floor in data.floors:
         story = floor.story
@@ -64,13 +86,18 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
         for index,member in enumerate(data.layout.members):
             a,b = nodes[story,member.start],nodes[story,member.end]
             if member.role=='wall':
-                result = call('AddWall',m.AreaObj.AddByPoint,4,
-                    [nodes[story-1,member.start],nodes[story-1,member.end],b,a],'',f'W{round(floor.wall_thickness_m*1000)}')
-                name = result[-1]
-                call('WallPier',m.AreaObj.SetPier,name,source_to_pier[index])
+                for part in range(wall_vertical_subdivisions):
+                    lower,upper = story-1+part/wall_vertical_subdivisions,story-1+(part+1)/wall_vertical_subdivisions
+                    result = call('AddWall',m.AreaObj.AddByPoint,4,
+                        [nodes[lower,member.start],nodes[lower,member.end],nodes[upper,member.end],nodes[upper,member.start]],
+                        '',f'W{round(floor.wall_thickness_m*1000)}')
+                    name = result[-1]
+                    call('WallPier',m.AreaObj.SetPier,name,source_to_pier[index])
+                    mapping.append({'story':story,'source_id':member.member_id,'role':member.role,
+                        'etabs_object':name,'mesh_piece':part})
             else:
                 name, = call('AddBeam',m.FrameObj.AddByPoint,a,b,'',member.role)
-            mapping.append({'story':story,'source_id':member.member_id,'role':member.role,'etabs_object':name})
+                mapping.append({'story':story,'source_id':member.member_id,'role':member.role,'etabs_object':name})
         print(f'STAGE residential_floor_{story}_built',flush=True)
     call('PrescribedMassSource',m.PropMaterial.SetMassSource_1,False,True,False,0,[],[])
     mass_source = call('MassSourceReadback',m.PropMaterial.GetMassSource_1)
@@ -82,7 +109,7 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     area_names = call('ReadAreaNames',m.AreaObj.GetNameList)
     frame_names = call('ReadFrameNames',m.FrameObj.GetNameList)
     point_names = call('ReadPointNames',m.PointObj.GetNameList)
-    count_checks = {'walls':area_names[0]==n*sum(member.role=='wall' for member in data.layout.members),
+    count_checks = {'walls':area_names[0]==n*wall_vertical_subdivisions*sum(member.role=='wall' for member in data.layout.members),
         'beams':frame_names[0]==n*sum(member.role!='wall' for member in data.layout.members),
         'points':point_names[0]==len(nodes)+len(masters)}
     coordinate_error = 0.
@@ -94,7 +121,8 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
         raise ValueError(f'Model geometry/count readback mismatch: {count_checks}, error={coordinate_error}')
     write_json(directory/'geometry_readback.json',{'counts':{'areas':area_names[0],'frames':frame_names[0],'points':point_names[0]},
         'count_checks':count_checks,'max_coordinate_error_m':coordinate_error,
-        'beam_section_properties':{role:call('ReadBeamSection',m.PropFrame.GetSectProps,role) for role in ('primary','secondary')}})
+        'beam_section_properties':{role:call('ReadBeamSection',m.PropFrame.GetSectProps,role) for role in ('primary','secondary')},
+        'beam_theory':beam_theory,'beam_modifiers':modifiers,'wall_vertical_subdivisions':wall_vertical_subdivisions})
     write_json(directory/'model_mapping.json',{'origin_xy_m':data.origin_xy_m,'centre_xy_m':data.centre_xy_m,
         'source_members':len(data.layout.members),'objects':mapping,'masters':masters,'mass_kg':actual_mass,
         'mass_source':mass_source,'slab_stiffness':'rigid diaphragm only, matching MVLEM protocol',
@@ -149,6 +177,7 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     # installation it removes the native solver files after results are read.
     return {'purpose':'RESIDENTIAL_ELASTIC_LATERAL_DIAGNOSTIC','units':'N_m_kg_s',
         'verified':all(all(check.values()) for check in checks.values()),'checks':checks,
-        'case_status':state,'static':outputs,'modes':modal,'floor_mode_shapes':shapes,
+        'case_status':state,'static':outputs,'modes':modal,'floor_mode_shapes':shapes,'beam_theory':beam_theory,
+        'wall_vertical_subdivisions':wall_vertical_subdivisions,
         'prescribed_floor_masses_kg':[f.mass_kg for f in data.floors],
         'engineering_feasibility':'NOT_EVALUATED','reinforcement':'NOT_EVALUATED'}

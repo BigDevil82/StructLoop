@@ -9,6 +9,7 @@ from struct_agent.adapters.etabs.contracts import CantileverSpec, ETABSConfig, E
 from struct_agent.adapters.etabs.residential_input import prepare
 from struct_agent.adapters.etabs.results import roof_equilibrium
 from struct_agent.adapters.etabs.comparison import modal_mac
+from struct_agent.adapters.etabs.residential import beam_modifiers
 from struct_agent.schemas import ProjectSpec, DesignCandidate, LayoutCandidate
 
 
@@ -75,3 +76,27 @@ def test_mass_weighted_mac_handles_mode_swaps_and_sign_scaling() -> None:
     np.testing.assert_allclose(modal_mac(a,b,np.array([2.,3.])),[[0.,1.],[1.,0.]])
     with pytest.raises(ValueError,match='Zero mode'):
         modal_mac(a,np.zeros((1,2)),np.ones(2))
+
+
+def test_euler_diagnostic_changes_only_two_shear_modifiers() -> None:
+    baseline = beam_modifiers('timoshenko')
+    comparison = beam_modifiers('euler_comparison')
+    assert baseline==[1.]*8
+    assert [i for i,(a,b) in enumerate(zip(baseline,comparison)) if a!=b]==[1,2]
+    assert comparison[1]==comparison[2]==1e6
+    with pytest.raises(ValueError):
+        ETABSRequest(config=ETABSConfig(beam_theory='euler_comparison'),spec=CantileverSpec())
+    with pytest.raises(ValueError):
+        ETABSRequest(config=ETABSConfig(wall_vertical_subdivisions=2),spec=CantileverSpec())
+
+
+def test_reciprocity_audit_detects_case_component_misassignment() -> None:
+    from struct_agent.adapters.etabs.x_report import compliance_audit
+    data={'static':{'ROOF_X':{'floors':[{'u1':2.,'u2':.1}]},'ROOF_Y':{'floors':[{'u1':.1,'u2':3.}]}}}
+    audit=compliance_audit(data,1.,'opensees')
+    assert audit['reciprocity_check'] and audit['positive_work']
+    for force in (0.,-1.,float('nan'),float('inf')):
+        with pytest.raises(ValueError):
+            compliance_audit(data,force,'opensees')
+    data['static']['ROOF_Y']['floors'][0]['u1']=1.
+    assert not compliance_audit(data,1.,'opensees')['reciprocity_check']

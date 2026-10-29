@@ -954,3 +954,61 @@ EDB、原生日志、映射、逐层响应、全MAC矩阵和报告均在上述�
 本轮ETABS RunAnalysis实际6次（含两次无质量模态失败），学校LLM调用=0、GA=0。
 OpenSees额外建筑规模参考2次、详细诊断2次，普通入口真实复算由上述目标和全真实测试记录；小构件测试另计。
 下一最小任务是对墙梁子结构及离散尺度进行收敛核查，定位X向9.43%位移差异，再进入重力/反应谱与配筋独立复核。
+
+## 2026-10-29 Phase 4：X向位移与网格敏感性检查
+
+本次仅处理弹性诊断的梁理论、可控子结构和竖向离散；已先读计划、路线图、README与上游契约。
+新增诊断代码reference_mesh.py、substructures.py、x_report.py；
+扩展ETABS contracts/residential/worker、OpenSees reference、comparison和CLI的显式诊断选项，
+更新单元/真实集成测试、solver_inventory、README及x_displacement_checks.md。
+未改生产建模器、RC-GNN/CASINO权重或布局，生产物理指纹仍为e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62。
+
+### 关键发现及限制
+
+梁剪切变形可解释一部分差异：ETABS原粗模型X/Y=2.702472/2.714278mm，
+只把两剪切面积修正系数设1e6以近似Euler梁后为2.374560/2.573717mm。
+其余六项修正系数均为1并读回确认；不建议把诊断参数用于工程设计。
+两软件同12层、同截面/荷载/质量下，每层墙竖向细分1/2/4片的X位移分别为：
+
+- ETABS近似Euler：2.374560 / 4.061073 / 5.124680mm；2→4片仍增26.2%。
+- OpenSees Euler：2.447730 / 3.684367 / 4.357638mm；2→4片仍增18.3%。
+
+细化均保留原真实楼层与梁，仅增加共享墙网格节点，不加中间质量或楼板约束。
+OpenSees 2/4片均用纤维×2；仅纤维×2的控制组相对原模型变化小于0.02%。
+原网格1:1重新创建的整栋响应复现至约1e−11相对误差，T形连接细化共节点/质量/梁测试通过。
+各模型整体平衡、有限性、X/Y柔度互易性及正功检查通过，仍不能证明刚度正确。
+单梁解析解通过；平截面假定下合成墙64纤维、8/16/32/64竖向片误差约3.36/1.78/0.92/0.48%，
+独立离散应变能解与实际MVLEM吻合。粗网格非单调误差和全部运行保留。
+该子结构通过不代表复杂墙梁住宅收敛，也未完成两端墙梁子结构对照。
+
+因此原两套粗模型约9.43%/1.13%的接近只能作为原离散的观察，不能据此接受整栋模型。
+当前状态MESH_CONVERGENCE_NOT_ESTABLISHED，工程NOT_VALIDATED。
+没有将任一细网格指定为真值，没有回写旧数值、更新代理标签或越过短物理构件门槛。
+正式优化仍应等待分析基础验证，不能仅加密数值单元代替几何治理。
+
+### 工件、真实调用与验证
+
+汇总 `outputs/x_displacement_diagnosis_01/{report.md,results.json,manifest.json}`，
+详细边界、原始目录及等价复现命令见 `docs/x_displacement_checks.md`。
+住宅ETABS实际新增RunAnalysis三次：euler_01、euler_mesh2_01、euler_mesh4_01，
+分别91.81/94.52/126.03s，均由专用实例完成并清理；对象墙数1944/3888/7776，梁均972。
+OpenSees额外住宅参考四次：mesh2_01、rebuild_01、fibers2_01、mesh4_01。
+合成子结构矩阵运行两次，第二次补充独立离散解核验，不覆盖第一次工件。
+学校LLM调用0、GA0；真实构件/回归复算另计于以下测试。
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q --run-real tests/unit/test_etabs.py tests/integration/test_substructure_convergence.py
+.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m pytest -q --run-real
+git diff --check
+```
+
+结果：目标20 passed（0.35s）；默认全套129 passed、25 skipped、1 warning（9.80s）；
+完整真实全套154 passed、0 skipped、8 warnings（29.16s）。
+25项为默认关闭的真实求解/模型测试；全部开启后通过，不是跳过求解失败。
+提示均为现有PyG/ezdxf依赖弃用提示，diff检查通过。
+单元/回归测试通过与整栋离散收敛是不同命题，上述负面网格发现仍未解决。
+
+下一最小任务：两端一致的单片墙→L/T形墙→墙梁子结构，
+分开核对有/无刚性楼板、共节点和高度细分的影响，定位粗网格过硬与细化后软件差异，
+再确定生产单元/网格策略。重力/谱/规范配筋独立验证仍未完成。

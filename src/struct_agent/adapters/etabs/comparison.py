@@ -51,6 +51,8 @@ def compare(etabs_directory: Path, reference_directory: Path, directory: Path) -
         static[case] = rows
     result = {'status':'DIFFERENCES_REPORTED_NOT_ACCEPTANCE','periods':modes,'mass_weighted_mac_matrix':mac.tolist(),
         'static':static,'units':'N_m_kg_s','engineering_feasibility':'NOT_EVALUATED',
+        'etabs_options':em['config']['etabs'],
+        'opensees_mesh':om['config'].get('diagnostic_mesh',{'vertical_subdivisions':1,'fiber_refinement':1}),
         'scope':'Identical prescribed lateral masses, endpoint-based rotational inertia, roof forces and rigid diaphragms; not gravity/seismic/rebar validation'}
     create_run(directory,seed=0,inputs={'etabs_result':epath,'opensees_result':opath,
         'etabs_manifest':etabs_directory/'manifest.json','opensees_manifest':reference_directory/'manifest.json'},
@@ -58,6 +60,8 @@ def compare(etabs_directory: Path, reference_directory: Path, directory: Path) -
     write_json(directory/'comparison.json',result)
     lines = ['# 12层住宅弹性模型对照','',
         '质量和水平加载一致；周期按质量加权MAC一对一匹配。差异尚待解释，不是工程验收或配筋验证。','',
+        'ETABS梁设置：'+em['config']['etabs'].get('beam_theory','timoshenko')+'。','',
+        'OpenSees诊断网格：'+str(om['config'].get('diagnostic_mesh',{'vertical_subdivisions':1,'fiber_refinement':1}))+'。','',
         '| ETABS阶次 | OpenSees阶次 | ETABS T/s | OpenSees T/s | 相对ETABS差异 | MAC |',
         '|---|---|---|---|---|---|']
     for mode in modes:

@@ -12,6 +12,8 @@ from struct_agent.schemas import LayoutCandidate, ProjectSpec, DesignCandidate
 class ETABSConfig(Contract):
     install_root: Path = Path('C:/Program Files/Computers and Structures/ETABS 18')
     timeout_s: float = Field(default=180., ge=10., le=1200.)
+    beam_theory: Literal['timoshenko','euler_comparison'] = 'timoshenko'
+    wall_vertical_subdivisions: int = Field(default=1,ge=1,le=4)
 
 
 class CantileverSpec(Contract):
@@ -44,3 +46,9 @@ class ResidentialSpec(Contract):
 class ETABSRequest(Contract):
     config: ETABSConfig
     spec: CantileverSpec | ResidentialSpec = Field(discriminator='kind')
+
+    @model_validator(mode='after')
+    def theory_scope(self) -> ETABSRequest:
+        if isinstance(self.spec,CantileverSpec) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
+            raise ValueError('Beam/mesh comparison options are supported only for the residential diagnostic')
+        return self
