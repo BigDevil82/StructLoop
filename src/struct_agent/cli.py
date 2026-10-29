@@ -97,6 +97,11 @@ def main() -> None:
         layout = layout_from_prediction(rooms, ratios, layout_id=args.run.name)
         write_json(args.run/"room_graph.json",rooms.model_dump())
         write_json(args.run/"layout.json",layout.model_dump())
+        from struct_agent.services.model_review import review_geometry
+        review = review_geometry(layout)
+        write_json(args.run/'geometry_review.json', review.model_dump())
+        if review.requires_model_repair:
+            print('Model review required: short predicted walls were preserved; resolve them before real optimization.')
         print(f"Generated {len(layout.members)} members; artifacts: {args.run}")
     else:
         from struct_agent.adapters.casino import CasinoConfig, optimize

@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import openseespy.opensees as ops
 from ..core.config import ModelConfig
 from ..core.domain import BeamRole, FEMInput, PlanMember
@@ -34,6 +34,7 @@ class WallStoryElementUnit:
     member: PlanMember
     thickness: float
     story_height: float
+    source_wall_ids: tuple[int, ...] = ()
 
 @dataclass
 class ModelBuildResult:
@@ -45,6 +46,7 @@ class ModelBuildResult:
     floor_story_nodes: list[list[int]]
     beam_element_units: list[BeamElementUnit]
     wall_story_element_units: list[WallStoryElementUnit]
+    wall_mesh_element_units: list[WallStoryElementUnit] = field(default_factory=list)
 
 class StructuralModelBuilder(ABC):
     name: str

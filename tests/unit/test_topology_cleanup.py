@@ -19,9 +19,13 @@ def test_endpoint_sliver_collapses_without_detaching_junction() -> None:
     assert len(shared) == 3
 
 
-def test_small_wall_is_retyped_as_beam_without_deleting_boundary() -> None:
+def test_small_predicted_wall_is_preserved_for_model_review_not_invented_beam() -> None:
     result = clean_segments([segment((0,0),(90,0),'shearwall')], snap_tolerance=2., min_wall_length=100.)
-    assert len(result) == 1 and result[0]['type'] == 'beam' and result[0]['length'] == 90.
+    assert len(result) == 1 and result[0]['type'] == 'shearwall' and result[0]['length'] == 90.
+    builder = FEMTopologyBuilder(gap_tolerance=2., min_length=100.)
+    walls, beams = builder._subtract_wall_from_edge(LineString([(0,0),(1000,0)]), [(0.,.09)])
+    assert len(walls) == 1 and walls[0]['length'] == 90.
+    assert sum(s['length'] for s in beams) == 910.
 
 
 def test_unpredicted_short_gap_stays_beam_and_zero_interval_disappears() -> None:

@@ -50,6 +50,11 @@ class CasinoProblem(OptimizationProblem):
         self._variables = [VariableSpec(v.name, [round(float(x)*1000) if v.unit == "m" else x for x in v.values])
                            for v in spec.design_variables]
         self.results: list[tuple[DesignCandidate, EvaluationResult]] = []
+        from .fea import native_topology
+        from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers
+        self.member_counts = {
+            "wall": spec.stories * len(wall_piers(native_topology(layout).walls)),
+            "beam": spec.stories * sum(m.role != "wall" for m in layout.members)}
         self.initial_values = initial_values
         if initial_values is not None:
             DesignCandidate(design_id="initial", layout_id=layout.layout_id,
@@ -106,8 +111,7 @@ class CasinoProblem(OptimizationProblem):
         result = summarize_analysis(analysis_result=ParametricAnalysisResult(**record.raw),
             params=native_params(design, self.spec), geom_scale=1., objective_cfg=self.objective_cfg,
             constraint_cfg=self.constraint_cfg, limit_cfg=self.limit_cfg,
-            member_counts={"wall": self.spec.stories * sum(m.role == "wall" for m in self.layout.members),
-                           "beam": self.spec.stories * sum(m.role != "wall" for m in self.layout.members)})
+            member_counts=self.member_counts)
         if not any(d.design_id == design.design_id for d,_ in self.results):
             self.results.append((design,result))
         return result
@@ -139,6 +143,11 @@ def create_optimizer(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpe
     if cfg.use_surrogate and cfg.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("BLOCKED: explicitly requested CUDA is unavailable")
     directory.mkdir(parents=True, exist_ok=False)
+    from struct_agent.services.model_review import review_geometry
+    review = review_geometry(layout)
+    write_json(directory / 'geometry_review.json', review.model_dump())
+    if getattr(evaluator.solver, 'fidelity', 'full') == 'full' and review.requires_model_repair:
+        raise ValueError('BLOCKED: unresolved short physical wall piers require model repair before real parameter optimization; see geometry_review.json')
     context = directory / "context"
     layout_path = prepare_context(layout, rooms, context)
     problem = CasinoProblem(layout,spec,evaluator,layout_path=layout_path,seed=cfg.seed,initial_values=cfg.initial_values)

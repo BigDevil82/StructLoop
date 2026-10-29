@@ -608,3 +608,93 @@ Phase 4 的基础工程验收路径已打通：实际反馈后继续优化、获
 下一小任务应把最佳方案的构件诊断接入受控修复，先核实短墙是否应作为组合墙肢/边缘段建模和校核，
 再形成可验证的局部截面或墙段调整操作；不通过放宽限值、漏检或无依据改分类获得“可行”。
 旧代理权重与当前材料标签仍缺少兼容证据，继续禁用于真实筛选。正式策略对照和论文结论仍待验证。
+
+## 2026-10-29：物理墙肢、短构件前处理及盈建科接口核查
+
+### 发现与处理
+
+用户明确指出应先满足要求再优化材料，成本高于不可行初值可以接受，并要求参照成熟软件处理极短墙梁。
+本轮先读计划、路线、README和上游契约，分步修正建模语义，未重训/改权重、改真实图纸或编造工程条件。
+
+查阅原厂资料和本机YJK-A手册后确认：分析网格、物理墙肢和配筋设计截面不是同一对象；
+YJK有短墙归并/MPC处理、组合截面/柱式配筋和小跨高比连梁转壳元等不同机制。
+本机手册模型转换章（PDF408页、印刷397页）明确列出180 mm短墙/网格归并与相邻构件重接。
+这些属于软件技术处理，不当作所有工程的统一规范长度要求。详见 `docs/model_semantics.md`。
+
+- 新增 `_vendor/shearwall_modeling/geometry/wall_piers.py`：
+  共线且端点相接的墙段组成直墙肢，允许保留中间T节点；不跨洞口，不任意合并正交翼缘。
+  保留全部原始单元和节点，每个源墙段只归属一个设计墙肢。
+- `builders/base.py`、`mvlem_frame.py`：保存原始网格单元和物理墙肢两套映射。
+  各基本工况、各阶振型都先在墙肢形心积分合力，再CQC/组合；绝不事后相加绝对值包络。
+  `fea_diagnostics.py`、`fea_member_evidence.py`、诊断Schema新增源构件映射及 `wall_piers.json`。
+  CASINO设计失败比例的分母同步改为物理墙肢数，而不是分析片段数。
+- 修正之前没有依据的短墙转梁行为：`fem_builder.py` 和 `topology_cleanup.py` 两处代码均撤掉；
+  预测墙保留墙类别。2 mm数值近点吸附保留，不能替代180 mm工程前处理。
+- 新增 `services/model_review.py`：按物理墙肢前置审查；真实GA若存在未处理的180 mm及以下物理墙肢，
+  保存 `geometry_review.json` 并在任何FEA之前阻断。长度/厚度小于4与梁段长高比小于2另列专项审查提示；
+  梁的2仅是本地优先排查启发式，不是YJK转换阈值或规范判废线，详见模型语义文档。
+- 小型真实构建测试暴露3层时中间分区为0层仍送入ModelConfig的问题，已剔除空分区。
+  自重测试初始误把楼板自重重复加入；回读上游注释确认板自重已包含在dead_kpa，修正测试，未改荷载。
+  同时在迁移副本恢复这条原注释，避免再误读质量源。
+
+### 验证与当前工件
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_model_review.py tests/unit/test_topology_cleanup.py tests/unit/test_wall_piers.py tests/unit/test_fea_diagnostics.py tests/unit/test_search_feedback.py tests/integration/test_wall_pier_mechanics.py --run-real
+# 32 passed in 3.14s
+.venv/Scripts/python.exe -m pytest -q
+# 106 passed, 17 skipped, 1 warning in 7.43s
+.venv/Scripts/python.exe -m pytest -q --run-real
+# 123 passed, 8 warnings in 88.73s；0 failed，0 skipped
+```
+
+新增反例包括T节点0.1+2.3 m直墙肢、反向/旋转墙段、洞口不合并、重叠段拒绝、节点与单元完整保留、
+轴力移至新形心的弯矩、相反振型内力先抵消再CQC，以及前置拒绝不消耗真实分析预算。
+新的小型真实OpenSees构建核验保留全部MVLEM单元、T节点、共享节点和质量；不是商业软件设计对比。
+删去已主动修改的MVLEM builder与上游AST逐字一致断言，保留未修改算法检查并以真实拓扑/质量守恒替代。
+17项默认跳过已在全套显式真实测试全部运行，8项warning仍为原有依赖弃用提示。
+
+当前分析指纹：`a76e2b6fe9f51d9c41c90d46ae0ca66bc692271ba89795a96dd9ee180a46dfcf`。
+固定既有结构输入独立复算（不是新生成流程已通过工程验算）：
+
+| 工件 | 墙分析段→直墙肢 | 墙配筋失败 前→后 | 墙剪压失败 前→后 | 结构可行 |
+|---|---:|---:|---:|---|
+| `member_diagnostics_baseline_06` | 149→97 | 133→21 | 64→25 | 否 |
+| `member_diagnostics_symmetry_06` | 187→121 | 506→266 | 159→72 | 否 |
+| `feedback_search_best_diagnostics_02` | 149→97 | 39→0 | 9→4 | 否 |
+
+三者均保留原图、参数、全部有限元网格和质量。整体周期/位移/扭转、梁检查与混凝土量在原容差内一致；
+变化是墙肢合力和配筋计量对象纠错，没有漏掉源墙段或改通过限值。
+上一轮参数候选仍有4项墙、35项梁剪压失败；控制墙长0.188 m、利用率1.0712，梁分析段长0.755 m、利用率1.5057。
+梁0.755 m是分析段长，尚不能直接当作实际净跨。墙配筋0失败也不等同于柱式/组合截面验算完整。
+
+真实命令：
+
+```powershell
+.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/residential_001_rcgnn_02/layout.json --spec configs/reference_spec.json --design outputs/physics_fix_inputs_01/design_baseline.json --run outputs/member_diagnostics_baseline_06
+.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/residential_001_symmetry_03/layout.json --spec configs/reference_spec.json --design outputs/physics_fix_inputs_01/design_symmetry.json --run outputs/member_diagnostics_symmetry_06
+.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/residential_001_rcgnn_02/layout.json --spec configs/reference_spec.json --design outputs/feedback_search_inputs_01/best_design.json --run outputs/feedback_search_best_diagnostics_02
+.venv/Scripts/python.exe -m struct_agent.cli generate --seed 42 --run outputs/residential_001_rcgnn_03
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_03/layout.json --rooms outputs/residential_001_rcgnn_03/room_graph.json --spec configs/reference_spec.json --run outputs/model_preflight_agent_01 --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 2 --population 2 --generations 2
+```
+
+新生成162墙段、81梁、43板区；102个直墙肢中12个进入180 mm审查，不再声称已满足100 mm或工程最小墙长。
+`model_preflight_agent_01` 运行到审查阻断，状态 `AWAITING_REVIEW`，真实FEA=0、API调用=0。
+此状态表示当前缺少自动前处理工具，不是要求用户重新批准bug修复；下一步应将其接到受控模型修复分支。
+
+本轮建筑规模真实计算总计5次：3次独立诊断，加首次120项全套与最终123项全套中各1次普通入口独立对照。
+未隐藏失败数值；3层小型构建测试没有执行结构求解，不计设计预算。没有调用学校LLM API或训练模型。
+核验在 `outputs/wall_pier_verification_01/verification.json`，自身0次FEA；核对全部源构件逐层覆盖及全局不变量。
+手册提取、原厂API探测和固定输入几何审查位于 `outputs/wall_pier_review_01/`。
+
+### 成熟后端的实际可用性与下一任务
+
+本机注册表与安装目录已确认YJK 2025 V8.0.0，还发现SAP2000/ETABS安装。
+YJK自带Python 3.10.11执行 `import YJKAPI` 返回 `YJK_API_IMPORT_OK`、exit=0；
+没有调用初始化控制、创建项目、启动商业求解或读取授权文件，不能宣称YJK真实计算通过。
+原厂入口声明和本机手册路径/哈希保存在 `configs/solver_inventory.json`。
+
+下一最小任务：建立隔离目录中的受控YJK模型导出/读取，核对单位、楼层、梁墙板、荷载和ID映射，
+再验证前处理与真实求解/配筋返回，形成对本地简化检查的工程参照。
+仍未实现YJK的MPC/短墙归并、完整组合墙/柱式配筋和小跨高比梁壳模型，不继续将本地检查包装成成熟软件等价结果。
+旧CASINO标签/权重不得跨新设计单位、几何或求解后端未经验证使用；真实工程条件和最终签审边界保持明确。

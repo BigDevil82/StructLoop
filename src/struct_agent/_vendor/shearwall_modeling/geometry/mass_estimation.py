@@ -27,5 +27,6 @@ def estimate_structural_self_mass_per_floor(input_data: FEMInput, story_height: 
     secondary_beam_mass = secondary_beam_vol * density_kg_m3
     beam_mass = beam_vol * density_kg_m3
     slab_mass = slab_vol * density_kg_m3
+    # Slab self-weight is included in floor dead_kpa by the migrated contract.
     total_self_mass = wall_mass + beam_mass
     return {'floor_area': area, 'wall_mass': wall_mass, 'primary_beam_mass': primary_beam_mass, 'secondary_beam_mass': secondary_beam_mass, 'beam_mass': beam_mass, 'slab_mass': slab_mass, 'total_self_mass': total_self_mass}

@@ -15,7 +15,7 @@ pytestmark = pytest.mark.real
     ("symmetry", "residential_001_symmetry_03"),
 ])
 def test_real_diagnostic_replay_evidence(variant: str, layout_run: str) -> None:
-    run = Path("outputs") / f"member_diagnostics_{variant}_05"
+    run = Path("outputs") / f"member_diagnostics_{variant}_06"
     if not (run / "summary.json").is_file():
         pytest.fail(f"BLOCKED: missing real diagnostic artifacts {run}")
     payload = json.loads((run / "analyses/eval_00001.json").read_text(encoding="utf-8"))
@@ -25,10 +25,16 @@ def test_real_diagnostic_replay_evidence(variant: str, layout_run: str) -> None:
     assert record.analysis_signature == analysis_signature()
     layout = LayoutCandidate.model_validate_json((Path("outputs") / layout_run / "layout.json").read_text(encoding="utf-8"))
     members = load_members(run / "diagnostics/eval_00001/members.json")
-    assert len(members) == len(layout.members) * 28
+    from struct_agent.adapters.fea import native_topology
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers
+    assert len(members) == (len(wall_piers(native_topology(layout).walls)) + sum(m.role != 'wall' for m in layout.members)) * 28
     assert len({(m.native_id, m.story) for m in members}) == len(members)
+    for story in range(1,29):
+        source_ids = [source for m in members if m.story == story for source in m.source_member_ids]
+        assert len(source_ids) == len(set(source_ids)) == len(layout.members)
+        assert set(source_ids) == {m.member_id for m in layout.members}
     for member in members:
-        assert layout.members[member.native_id].member_id == member.member_id
+        assert layout.members[member.native_id].member_id in member.source_member_ids
         if member.role == "wall":
             assert member.reinforcement_checked
     summary = member_summary(members)

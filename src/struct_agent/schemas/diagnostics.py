@@ -11,6 +11,7 @@ from .base import Contract
 class MemberDiagnostic(Contract):
     native_id: int = Field(ge=0)
     member_id: str
+    source_member_ids: tuple[str, ...] = ()
     role: Literal["wall", "primary", "secondary"]
     story: int = Field(ge=1)
     start_m: tuple[float, float]

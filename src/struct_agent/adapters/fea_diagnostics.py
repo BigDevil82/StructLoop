@@ -46,6 +46,11 @@ def analyze_detailed(topology: FEMInput, params: ParametricModelParams, cfg: Dat
                 "all_modeled_walls_reinforcement_checked": True,
                 "members": [m.model_dump() for m in members]})
             write_json(directory / "model_config.json", asdict(model_cfg))
+            write_json(directory / "wall_piers.json", {
+                "mesh_panel_story_count": len(build.wall_mesh_element_units),
+                "physical_pier_story_count": len(build.wall_story_element_units),
+                "assembly_stage": "before_static_and_per_mode_force_extraction",
+                "units": [asdict(u) for u in build.wall_story_element_units]})
             write_json(directory / "checks.json", {"overall": asdict(overall),
                 "directions": {k: asdict(v) for k, v in directions.items()},
                 "design_failed_beams": [asdict(x) for x in design.failed_beams],

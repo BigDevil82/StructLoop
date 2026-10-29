@@ -210,8 +210,7 @@ class FEMTopologyBuilder:
             end_pt = tuple(p1 + vec * w_end)
             line = LineString([start_pt, end_pt])
             if line.length > 1e-8:
-                target = wall_segments if line.length >= self.min_length else beam_segments
-                target.append({'geometry': line, 'type': 'shearwall' if line.length >= self.min_length else 'beam', 'length': line.length})
+                wall_segments.append({'geometry': line, 'type': 'shearwall', 'length': line.length})
         for b_start, b_end in beam_intervals:
             start_pt = tuple(p1 + vec * b_start)
             end_pt = tuple(p1 + vec * b_end)

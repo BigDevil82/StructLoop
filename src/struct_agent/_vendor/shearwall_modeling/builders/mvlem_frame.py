@@ -17,7 +17,9 @@ class MVLEMFrameBuilder(StructuralModelBuilder):
     """Equivalent wall-frame model with MVLEM_3D wall elements.
 
     Notes:
-    - One MVLEM_3D element is created for each wall at each story.
+    - One MVLEM_3D element is created for each input wall segment at each story.
+    - Straight physical piers assemble these panels for force extraction/design;
+      FE intersection nodes and element connectivity remain explicit.
     - Beams are modeled with elasticBeamColumn.
     - Floors are tied by rigid diaphragm with one master node per story.
     """
@@ -154,4 +156,5 @@ class MVLEMFrameBuilder(StructuralModelBuilder):
             master_nodes.append(master)
             floor_story_nodes.append(unique_slaves)
         self.logger.info('MVLEM model built: stories=%d, walls=%d, beams=%d', config.num_stories, len(input_data.walls), len(input_data.beams))
-        return ModelBuildResult(master_nodes=master_nodes, floor_area=floor_area, floor_load_masses=floor_load_masses, floor_self_masses=floor_self_masses, wall_base_units=wall_base_units, floor_story_nodes=floor_story_nodes, beam_element_units=beam_element_units, wall_story_element_units=wall_story_element_units)
+        from ..geometry.wall_piers import assemble_wall_units
+        return ModelBuildResult(master_nodes=master_nodes, floor_area=floor_area, floor_load_masses=floor_load_masses, floor_self_masses=floor_self_masses, wall_base_units=wall_base_units, floor_story_nodes=floor_story_nodes, beam_element_units=beam_element_units, wall_story_element_units=assemble_wall_units(wall_story_element_units), wall_mesh_element_units=wall_story_element_units)

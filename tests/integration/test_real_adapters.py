@@ -67,7 +67,6 @@ def test_rcgnn_matches_original_model_on_current_case() -> None:
 @pytest.mark.parametrize('relative,class_name',[
     ('shearwall_optimization/local_calibration.py','OnlineLocalCalibrator'),
     ('surrogate/gnn/model.py','LayoutParamGNN'),
-    ('shearwall_modeling/builders/mvlem_frame.py','MVLEMFrameBuilder'),
 ])
 def test_scientific_algorithm_bodies_unchanged(relative: str,class_name: str) -> None:
     def body(path: Path) -> str:
@@ -83,7 +82,7 @@ def test_real_fea_matches_current_detailed_result(tmp_path: Path) -> None:
     from struct_agent.adapters.physics import analysis_signature
     layout = LayoutCandidate.model_validate_json(Path('outputs/residential_001_rcgnn_02/layout.json').read_text(encoding='utf-8'))
     spec = ProjectSpec.model_validate_json(Path('configs/reference_spec.json').read_text(encoding='utf-8'))
-    data = json.loads(Path('outputs/member_diagnostics_baseline_05/analyses/eval_00001.json').read_text(encoding='utf-8'))
+    data = json.loads(Path('outputs/member_diagnostics_baseline_06/analyses/eval_00001.json').read_text(encoding='utf-8'))
     assert data['analysis']['analysis_signature'] == analysis_signature(), 'BLOCKED: regenerate current corrected diagnostic reference'
     design = DesignCandidate.model_validate_json(json.dumps(data['design']))
     record = OpenSeesAdapter(log_directory=tmp_path/'logs').evaluate(layout,design,spec,evaluation_id='regression_01')

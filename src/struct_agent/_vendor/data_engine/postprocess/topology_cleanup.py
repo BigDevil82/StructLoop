@@ -12,8 +12,8 @@ def clean_segments(segments: list[dict[str, Any]], *, snap_tolerance: float,
                    min_wall_length: float) -> list[dict[str, Any]]:
     """Collapse only numerical gaps within snap tolerance; retain boundary links.
 
-    Short predicted walls become beams, never missing edges. Unpredicted gaps
-    remain beams. A snap cluster stays within tolerance of its fixed anchor;
+    Preserve the predicted structural role, including unresolved short walls.
+    Unpredicted gaps remain beams. A snap cluster stays within tolerance of its fixed anchor;
     chained nearby points cannot accumulate an arbitrarily large displacement.
     """
     if not 0 < snap_tolerance < min_wall_length:
@@ -43,8 +43,6 @@ def clean_segments(segments: list[dict[str, Any]], *, snap_tolerance: float,
             continue
         line = LineString([a, b])
         kind = segment['type']
-        if kind == 'shearwall' and line.length < min_wall_length:
-            kind = 'beam'
         key = tuple(sorted((a, b)))
         row = {'geometry': line, 'type': kind, 'length': line.length}
         if key in seen:

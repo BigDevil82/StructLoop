@@ -20,7 +20,8 @@ def build_model_config_from_params(params: ParametricModelParams | dict[str, Any
     def make_section(tw_mm: int) -> SectionConfig:
         return SectionConfig(wall_thickness=tw_mm / 1000.0, beam_width=p.bb_main / 1000.0, beam_depth=p.hb_main / 1000.0, secondary_beam_width=p.bb_sec / 1000.0, secondary_beam_depth=p.hb_sec / 1000.0, slab_thickness=slab_thickness)
     groups = [StandardStoryGroupConfig(count=n_bottom, story_height=h_story, section=make_section(p.tw_bot), material=MaterialConfig(concrete_grade=p.conc_bot)), StandardStoryGroupConfig(count=n_middle, story_height=h_story, section=make_section(p.tw_mid), material=MaterialConfig(concrete_grade=p.conc_bot)), StandardStoryGroupConfig(count=n_top, story_height=h_story, section=make_section(p.tw_top), material=MaterialConfig(concrete_grade=p.conc_bot))]
-    return ModelConfig(standard_story_groups=groups, seismic=SeismicConfig(intensity=p.intensity, site_class=p.site_class, seismic_group=p.seismic_group), num_modes=num_modes)
+    # Three-story inputs can have an empty middle zone; it is not a story group.
+    return ModelConfig(standard_story_groups=[g for g in groups if g.count > 0], seismic=SeismicConfig(intensity=p.intensity, site_class=p.site_class, seismic_group=p.seismic_group), num_modes=num_modes)
 
 def analyze_parametric_model(input_data: FEMInput, params: ParametricModelParams, cfg: DatasetGenerationConfig, logger: logging.Logger | None=None) -> ParametricAnalysisResult:
     run_logger = logger or logging.getLogger('shearwall_parametric')

@@ -39,7 +39,10 @@ def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, anal
             result = design_by_key.get((native_id, story))
             if result is None:
                 raise ValueError(f"Modeled member {native_id} story {story} has no reinforcement check")
-            rows.append(MemberDiagnostic(native_id=native_id, member_id=member.member_id, role=member.role,
+            source_ids = getattr(unit, 'source_wall_ids', ()) if kind == 'wall' else ()
+            rows.append(MemberDiagnostic(native_id=native_id,
+                member_id=f'wall_pier_{native_id}' if source_ids else member.member_id,
+                source_member_ids=tuple(layout.members[i].member_id for i in source_ids) or (member.member_id,), role=member.role,
                 story=story, start_m=(unit.member.start.x, unit.member.start.y),
                 end_m=(unit.member.end.x, unit.member.end.y), length_m=metric.length,
                 width_m=width, depth_m=depth, concrete_grade=grade, fc_pa=fc, beta_c=beta_c,

@@ -8,7 +8,8 @@
     "FEA exceptions re-raised for typed Adapter error records",
     "Objective summarization separated from FEA execution; formula unchanged",
     "Corrected signed combinations, absolute envelopes, local section forces, CQC frequency ratios, all-wall design and topology slivers; no legacy solver branch",
-    "Corrected GA population accounting/elite allocation, feasibility-first ranking and feedback search; corrected idealized reinforcement takeoff and concrete density/price conversion"
+    "Corrected GA population accounting/elite allocation, feasibility-first ranking and feedback search; corrected idealized reinforcement takeoff and concrete density/price conversion",
+    "Assemble connected collinear wall panels into physical design piers before per-mode force extraction; preserve short-wall roles, introduce model preflight, preserve FE mesh/source mapping"
   ],
   "files": [
     {
@@ -27,8 +28,8 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\data_engine\\postprocess\\fem_builder.py",
       "destination": "src\\struct_agent\\_vendor\\data_engine\\postprocess\\fem_builder.py",
       "source_sha256": "79cfa4b4e2507c29fc0f9a29016d8c1f7045396b4f958ebbb737e4afdad996d2",
-      "destination_sha256": "bc74ee45889c14f81623832f31eb9236a1ab0ea03bdd7319cbdbf79fabd4bba9",
-      "local_corrections": "Correctness fixes 2026-10-28; see docs/physics_fixes.md"
+      "destination_sha256": "a2ba2b2e9f6ca85a2a582139ade362ab99b606abfa8dea1fcdde244fbc4124c8",
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\algorithms\\genetic.py",
@@ -72,7 +73,8 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\parametric\\analysis.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\parametric\\analysis.py",
       "source_sha256": "fe2a9f9e0d94d62d700dbcc82eaa6907b3f7ee5ef76afeae21d2e5c6383e7365",
-      "destination_sha256": "ddb1c0612bfd02608e76c1b79f701c6b46ecd9329ac615ed908bb05d29b36abe"
+      "destination_sha256": "c2828b4c9f7d84239eccf4872dcb310b2acc2c01e11e95ddf5d9b3effc3697ec",
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_pred\\config.py",
@@ -176,13 +178,15 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\builders\\mvlem_frame.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\builders\\mvlem_frame.py",
       "source_sha256": "841803c34b15bfa4a6a88871812874a0124c484161e8b52c24f8cd0a565fea98",
-      "destination_sha256": "ada0b223d7cfdf0d671b2894656d3dbb52600b7f83ff01a7e322920d834e8dca"
+      "destination_sha256": "502892fb41d42083b8fd2311c3de99be74c3b4f5e8bd273a8debdaf9348144a6",
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\builders\\base.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\builders\\base.py",
       "source_sha256": "e5b9978c7b4c2922b58bbabd77a3b17c31298fd41115532484b8b7ecf3235ab6",
-      "destination_sha256": "fa7126fb53cf8a09aa6d5818bdfb1abce27538976b94cbbda26a95dbdecf6f8a"
+      "destination_sha256": "c3fc3eea5ec7294ed90f372c32154f482f48490086966a5a408a61d6a6aa6924",
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\core\\config.py",
@@ -258,7 +262,8 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\geometry\\mass_estimation.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\geometry\\mass_estimation.py",
       "source_sha256": "b54cc7e9417f10c41b24544132389c90de47da00eefcd9c75d411e25445ffaea",
-      "destination_sha256": "4cf766a35330fe38734eaad4b5a6b3cdf1c81a65a28ccee0ee03ca1f08490b3e"
+      "destination_sha256": "10dcd5f7029739151309b0cb086b25edf8137983314442c3165ce023005e42ff",
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\design\\beam.py",

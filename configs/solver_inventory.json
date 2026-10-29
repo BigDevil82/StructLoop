@@ -1,0 +1,32 @@
+{
+  "audit_date": "2026-10-29",
+  "yjk": {
+    "product": "YJK 2025 V8.0.0",
+    "install_root": "D:\\Softwares\\YJKS_8_0_0",
+    "vendor_python": "D:\\Softwares\\YJKS_8_0_0\\python310\\python.exe",
+    "vendor_python_version": "3.10.11",
+    "api_import": "VERIFIED",
+    "model_export": "NOT_VALIDATED",
+    "license": "NOT_VALIDATED",
+    "analysis": "NOT_VALIDATED",
+    "result_import": "NOT_VALIDATED",
+    "references": {
+      "manual": {
+        "path": "D:\\Softwares\\YJKS_8_0_0\\Docs\\用户手册\\YJK-A建筑结构计算软件用户手册.pdf",
+        "sha256": "a26cd5f4b85fa0c29d2fae868a1f6f38aeb5025aa94715faec9d2cdea13710a4"
+      },
+      "api_entry": {
+        "path": "D:\\Softwares\\YJKS_8_0_0\\python310\\site-packages\\YJKAPI\\__init__.py",
+        "sha256": "c5732384c58008fa33b7dfd6967271901530e31d4cb4f5127fd661e7fefabaf2"
+      },
+      "model_api_stub": {
+        "path": "D:\\Softwares\\YJKS_8_0_0\\python310\\site-packages\\YJKAPI\\_CsToYjk\\__init__.pyi",
+        "sha256": "d7e5dc331c04468179d03af7452c0a7fd02d8fef43691dabb125619effde109f"
+      },
+      "ipc_api_stub": {
+        "path": "D:\\Softwares\\YJKS_8_0_0\\python310\\site-packages\\YJKAPI\\_YJKIPC\\__init__.pyi",
+        "sha256": "c99414aebbaa1fab863c29f5205ed8d238174d2852c341b016788da9279784ae"
+      }
+    }
+  }
+}
