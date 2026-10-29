@@ -88,3 +88,38 @@ def test_walls_only_removes_beams_preserves_parent_mass_and_fixes_only_null_dofs
     assert info['wall_elements'] == 48
     assert len(fixed[-12:]) == 12
     assert all(coord[:2] == (4.,2.) and dofs == (0,0,1,1,1,0) for coord,dofs in fixed[-12:])
+
+
+@pytest.mark.real
+@pytest.mark.parametrize('formulation',['mvlem','shell_dkgq','shell_asd'])
+def test_full_stiffness_joint_obeys_beam_law_nodal_balance_and_reciprocity(
+        tmp_path: Path,spec: ProjectSpec,layout: LayoutCandidate,design: DesignCandidate,formulation: str) -> None:
+    import json
+    from struct_agent.schemas import Member
+    members = tuple(Member(member_id=f'm{i}',start=a,end=b,role=role) for i,(a,b,role) in enumerate((
+        ((0.,0.),(1.,0.),'wall'),((0.,0.),(0.,3.),'wall'),
+        ((3.,0.),(4.,0.),'wall'),((4.,0.),(4.,3.),'wall'),((1.,0.),(3.,0.),'primary'))))
+    parent = ResidentialSpec(project=spec.model_copy(update={'stories':12}),
+        layout=layout.model_copy(update={'members':members}),design=design)
+    result = run_reference(parent,tmp_path/'joint',mesh=ReferenceMesh(wall_formulation=formulation),joint_rotation=True)
+    assert result['verified']
+    raw = json.loads((tmp_path/'joint/joint_raw.json').read_text(encoding='utf-8'))
+    checks = json.loads((tmp_path/'joint/joint_checks.json').read_text(encoding='utf-8'))
+    assert checks['verified'] and checks['beam_stiffness']=='ALL_COMPONENTS_RETAINED'
+    assert len(raw['cases'])==6 and all(len(r['beam_forces'])==12 for r in raw['cases'].values())
+    assert checks['reciprocity_relative_residual']<1e-10
+    from struct_agent.adapters.etabs.joint_mechanics import assess_joint
+    key = raw['plan']['beams']['1']['ends'][0]
+    raw['cases']['JOINT_I_MY']['wall_forces'][key][4] += 100.
+    assert not assess_joint(raw)['verified']
+
+
+@pytest.mark.real
+@pytest.mark.parametrize('formulation',['mvlem','shell_dkgq','shell_asd'])
+def test_joint_wall_elements_preserve_three_prescribed_rigid_rotations(
+        spec: ProjectSpec,layout: LayoutCandidate,design: DesignCandidate,formulation: str) -> None:
+    from struct_agent.adapters.etabs.joint_patch import rotation_patch
+    parent = ResidentialSpec(project=spec.model_copy(update={'stories':12}),layout=layout,design=design)
+    result = rotation_patch(parent,formulation)
+    assert result['verified']
+    assert all(row['residual']<1e-8 for row in result['rotations'])

@@ -12,7 +12,7 @@ class ReferenceMesh(Contract):
     vertical_subdivisions: int = Field(default=1,ge=1,le=4)
     fiber_refinement: int = Field(default=1,ge=1,le=4)
     rebuild_walls: bool = False
-    wall_formulation: Literal['mvlem', 'shell_dkgq'] = 'mvlem'
+    wall_formulation: Literal['mvlem', 'shell_dkgq', 'shell_asd'] = 'mvlem'
     center_of_rotation: Literal[0.4, 0.5] = 0.4
     plate_poisson: float | None = Field(default=None, ge=0., lt=.5)
     beam_bending_released: bool = False
@@ -25,7 +25,7 @@ class ReferenceMesh(Contract):
             raise ValueError('Beam removal and bending release are separate counterfactuals')
         if not self.beam_bending_released and self.beam_release_scope != 'all':
             raise ValueError('A beam release scope requires beam_bending_released')
-        if self.wall_formulation == 'shell_dkgq' and (self.center_of_rotation != .4
+        if self.wall_formulation != 'mvlem' and (self.center_of_rotation != .4
                 or self.plate_poisson is not None or self.fiber_refinement != 1):
             raise ValueError('MVLEM-specific options cannot be applied to a shell diagnostic')
         return self
@@ -142,8 +142,9 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
             tag = next_element
             next_element += 1
             corners = (bottom[0],bottom[1],top[1],top[0])
-            if mesh.wall_formulation == 'shell_dkgq':
-                ops.element('ShellDKGQ',tag,*corners,3000000+unit.story)
+            if mesh.wall_formulation != 'mvlem':
+                element = 'ShellDKGQ' if mesh.wall_formulation == 'shell_dkgq' else 'ASDShellQ4'
+                ops.element(element,tag,*corners,3000000+unit.story)
             else:
                 poisson = [] if mesh.plate_poisson is None else ['-Poisson',mesh.plate_poisson]
                 ops.element('MVLEM_3D',tag,*corners,count,

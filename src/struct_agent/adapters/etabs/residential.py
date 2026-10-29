@@ -26,10 +26,13 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
                       beam_theory: Literal['timoshenko','euler_comparison']='timoshenko',
                       wall_vertical_subdivisions: int=1,
                       connection_mode: Literal['default','zero_offsets','pinned_bending','walls_only'] | None=None,
-                      release_scope: Literal['all','wall_to_wall']='all') -> dict[str,Any]:
+                      release_scope: Literal['all','wall_to_wall']='all',
+                      joint_rotation: bool=False) -> dict[str,Any]:
     from struct_agent.adapters.fea import native_topology
     from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers
     data = prepare(spec)
+    if joint_rotation and connection_mode != 'default':
+        raise ValueError('Joint rotation diagnostic retains default full-stiffness beam connections')
     if not 1<=wall_vertical_subdivisions<=4:
         raise ValueError('Bounded wall subdivision count required')
     if connection_mode not in (None,'default','zero_offsets','pinned_bending','walls_only'):
@@ -180,7 +183,19 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
         call('RoofLoad',m.PointObj.SetLoadForce,masters[-1],case,force,True)
     call('ModalCase',m.LoadCases.ModalEigen.SetCase,'MODAL_CHECK')
     call('DisableDefaultCases',m.Analyze.SetRunCaseFlag,'',False,True)
-    cases = ('ROOF_X','ROOF_Y','MODAL_CHECK')
+    joint_cases = {}
+    if joint_rotation:
+        from .joint_mechanics import joint_plan
+        plan = joint_plan(spec)
+        for case,probe in plan['probes'].items():
+            xyz = plan['points'][probe['point']]
+            point = nodes[1,(xyz[0],xyz[1])]
+            call('AddJointMomentPattern',m.LoadPatterns.Add,case,8,0.,True)
+            force = [0.]*6
+            force[probe['dof']] = probe['moment_nm']
+            call('JointMomentLoad',m.PointObj.SetLoadForce,point,case,force,True)
+        joint_cases = plan['probes']
+    cases = ('ROOF_X','ROOF_Y','MODAL_CHECK',*joint_cases)
     for case in cases:
         call('Enable '+case,m.Analyze.SetRunCaseFlag,case,True)
     call('SaveBeforeAnalysis',m.File.Save,str(directory/'model.EDB'))
@@ -231,6 +246,15 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
                 span = max(math.dist(member.start,member.end) for member in data.layout.members if member.role != 'wall')
                 checks[case]['released_beam_bending_zero'] = maximum <= spec.roof_force_n*max(1.,span)*1e-7
                 outputs[case]['max_released_end_moment_nm'] = maximum
+    if joint_rotation:
+        from .joint_results import etabs_joint_results
+        from .joint_mechanics import assess_joint
+        joint = etabs_joint_results(client,spec,nodes,mapping)
+        write_json(directory/'joint_raw.json',joint)
+        assessment = assess_joint(joint)
+        write_json(directory/'joint_checks.json',assessment)
+        if not assessment['verified']:
+            raise ValueError('Joint mechanics checks failed; inspect retained native vectors')
     call('DeselectOutput',m.Results.Setup.DeselectAllCasesAndCombosForOutput)
     call('SelectModal',m.Results.Setup.SetCaseSelectedForOutput,'MODAL_CHECK')
     call('AllModeShapes',m.Results.Setup.SetOptionModeShape,1,12,True)

@@ -31,6 +31,8 @@ outputs/
 | 墙梁/整栋连接探针 | `outputs/current/beam_wall_connection_01/`、`whole_connection_02/`；无效 `whole_connection_01/`完整保留且排除比较 |
 | 最终纯墙配对与已知偏差处置 | `outputs/current/model_form_review_01/`；`outputs/reports/model_form_disposition_01/`，索引 `configs/model_form_review_evidence.json` |
 | 原整栋实际端区/梁轴只读补查 | 来源 `outputs/current/model_form_original_01/`；有效 `model_form_original_audit_02/`，失败 `_01`保留；未重新求解 |
+| 保留梁全部刚度的节点传递对照 | `outputs/current/full_stiffness_joint_01/`；汇总 `outputs/reports/full_stiffness_joint_summary_01/`，索引 `configs/joint_rotation_evidence.json` |
+| 节点转动符号排除检查 | 有效 `outputs/current/full_stiffness_joint_patch_02/`；`_01`因未逐DOF提交位移而无效，保留但排除结论 |
 | 全部38个已完成运行 | `outputs/archive/evidence_20261029.zip`，原始目录名保持不变 |
 
 归档整理时建立的当前输入、回归文件和原两份报告是逐字节副本，不是重新求解结果。

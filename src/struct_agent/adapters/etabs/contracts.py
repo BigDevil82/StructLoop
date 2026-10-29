@@ -147,14 +147,37 @@ class ModelFormReviewSpec(Contract):
     audit: ConnectionAuditSpec
 
 
+class JointRotationSpec(Contract):
+    """One source beam and attached walls; full beam stiffness, fixed probes."""
+    kind: Literal['joint_rotation'] = 'joint_rotation'
+    residential: ResidentialSpec
+
+    @model_validator(mode='after')
+    def coupled_substructure(self) -> JointRotationSpec:
+        if self.residential.project.stories != 12:
+            raise ValueError('Joint diagnostic fixes the authorized 12-story conditions')
+        members = self.residential.layout.members
+        beams = [m for m in members if m.role != 'wall']
+        if len(beams) != 1 or not 1 <= len(members)-1 <= 8:
+            raise ValueError('Joint diagnostic requires one beam and one to eight walls')
+        beam = beams[0]
+        if beam.start[0] >= beam.end[0] or abs(beam.start[1]-beam.end[1]) > 1e-8:
+            raise ValueError('Joint diagnostic currently requires a positive global-X source beam')
+        for point in (beam.start,beam.end):
+            if not any(m.role == 'wall' and point in (m.start,m.end)
+                    and abs(m.start[1]-m.end[1]) < 1e-8 for m in members):
+                raise ValueError('Each beam end must share a node with an X-oriented source wall')
+        return self
+
+
 class ETABSRequest(Contract):
     config: ETABSConfig
-    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec | ModelFormReviewSpec = Field(discriminator='kind')
+    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec | ModelFormReviewSpec | JointRotationSpec = Field(discriminator='kind')
 
     @model_validator(mode='after')
     def theory_scope(self) -> ETABSRequest:
-        if isinstance(self.spec,(ConnectionStudySpec,ModelFormReviewSpec)) and self.config.beam_theory != 'euler_comparison':
+        if isinstance(self.spec,(ConnectionStudySpec,ModelFormReviewSpec,JointRotationSpec)) and self.config.beam_theory != 'euler_comparison':
             raise ValueError('Connection study fixes Euler beams')
-        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec,ConnectionStudySpec,ModelFormReviewSpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
+        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec,ConnectionStudySpec,ModelFormReviewSpec,JointRotationSpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
             raise ValueError('Beam/mesh comparison options are supported only for the residential diagnostic')
         return self

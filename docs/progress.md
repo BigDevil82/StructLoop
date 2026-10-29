@@ -2,7 +2,8 @@
 
 更新：2026-10-29。当前处于Phase 4：已有Agent决策与真实调用闭环，先解决结构分析可靠性，再推进有效优化实验。
 最新用户规则：跨软件同条件差异小于5%即通过，停止核查校准；相关任务合并批量推进，已进入结构层面比对。
-后续授权允许接受有受控证据的单元近似差异。本批已完成最终建模核对并记录当前弹性范围的已知偏差；不改写原超限状态。
+后续澄清：纯墙对照通过不能外推带梁整栋，83fea85的整体系“收口”表述过强。
+本批保留梁全部刚度，已将方向性差异缩小到墙面内钻转/梁端强轴转角耦合，实际带梁体系仍未验收。
 本文件只保留现状和最近任务。早期逐轮日志见 `git show ef2c915:docs/progress.md`；代码及文档历史由Git保留。
 默认案例和工程条件是不同的确认事项：建筑固定为residential_001；现有条件仅获准冒烟，12层用于当前软件对照。
 
@@ -45,7 +46,50 @@
 完整负面发现、控制组和两端原始结果均保留，见 `x_displacement_checks.md` 与 `outputs/reports/x_displacement/report.md`。
 不得把细网格某次结果指定为真值或直接写入GA/代理标签。
 
-## 本批任务：最终建模核对与已知偏差收口
+## 本批任务：保留梁全部刚度的节点转角传递对照
+
+起点83fea85，工作区干净。Phase 4，沿用住宅原图抽取的12层墙梁子结构；主梁1.8m、250×500mm，原五段墙不变。
+
+- 新增 `joint_{mechanics,results,study,patch}.py`，类型化JointRotationSpec及固定worker分支；
+  两端诊断适配器新增受控单位弯矩与六自由度/梁墙节点力读取。保留原12根梁所有轴向、弯曲、扭转刚度，
+  不释放梁端、不拟合材料、不增设弹簧或刚接区。原屋顶两荷载逐层响应与既有ETABS刚接结果复现差为0。
+- 复用原屋顶工况，增加首层梁I/J端MX/MY各1kNm诊断；比较ETABS ShellThin与OpenSees MVLEM、ShellDKGQ，
+  另列ASDShellQ4默认参数独立控制。新增控制不是生产单元替换，不将其当作真值。
+- 三组OpenSees及ETABS都满足各自完整梁刚度方程；最大相对残差ETABS2.23e-7、OpenSees约4.20e-13。
+  首层梁两端FZ/MX/MY平衡最大相对残差2.07e-11，4×4转角柔度互等且正定；原整体平衡及新增OpenSees基底平衡通过。
+  未发现梁刚度丢失或弯矩未传递。
+- 具体定位：梁沿X，强轴转角RY是相连XZ墙壳的法向钻转。
+  相同1kNm加载，ShellDKGQ的I/J端MY柔度分别比ETABS大140.23%/144.09%，约2.4倍；
+  其MX绕梁轴通道仅差0.0195%/0.0010%，按5%规则关闭。
+- 原屋顶X荷载下，首层I端ETABS节点RY=+0.00297457rad、墙边割线转角+0.00303050rad；
+  ShellDKGQ分别为−0.00103010rad、+0.00776144rad。割线转角不是节点钻转的强制真值，
+  但该方向分离及单位弯矩证据支持墙转角插值/节点耦合是重要通道，不能再以“单元名称不同”笼统解释。
+- 三个OpenSees单元的有效XYZ刚体转动检查均通过，排除简单整体旋转符号错误；
+  尚未分离局部插值、连接区有限尺寸与近节点网格，未证明原生单元bug或差异不可避免。
+- 首次刚体检查 `_patch_01`遗漏setNodeDisp逐DOF提交，完整规定位移未保留，判为诊断设置无效；
+  修正为逐DOF提交并逐节点读回后 `_patch_02`通过，不把前次失败当作原生单元问题。
+  两次执行源码均已按原manifest的SHA256逐字节保存；主ETABS执行快照150文件核验通过。
+- 原屋顶132项通过数MVLEM81、ShellDKGQ44、默认ASD8，保留全部超限。ASD并未整体改善，未挑选有利指标。
+  修正README、PLAN/ROADMAP和当前范围说明；旧纯墙报告/数值/哈希不改写，新摘要明确撤回实际带梁整栋的笼统接受表述。
+- 工件 `outputs/current/full_stiffness_joint_01/`，有效刚体检查 `full_stiffness_joint_patch_02/`；
+  汇总报告 `outputs/reports/full_stiffness_joint_summary_01/`，说明 `docs/joint_rotation_transfer.md`，
+  哈希入口 `configs/joint_rotation_evidence.json`（29项）。
+
+验证命令：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_joint_mechanics.py tests/integration/test_structural_subsystem.py --run-real
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.joint_study --run outputs/current/full_stiffness_joint_01 --report outputs/reports/full_stiffness_joint_01
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.joint_patch --source-manifest outputs/current/structural_comparison_01/etabs/wall_beam/manifest.json --run outputs/current/full_stiffness_joint_patch_02
+.venv/Scripts/python.exe -m pytest -q
+git diff --check
+```
+
+目标14 passed（2.33s）；默认167 passed、40 skipped、1个既有PyG弃用提示（9.25s）。
+ETABS真实对照71.97s；OpenSees各约0.10/0.14/0.12s。旧模型差异索引26项及新索引29项SHA256复验通过。
+生产指纹仍e49011b…，未改真实图纸/参数/权重，未训练、调用LLM/GA或重试YJK。
+
+## 上一批：最终建模核对与偏差处置（83fea85，接受范围已由本批收紧）
 
 起点5afba18，工作区干净。Phase 4，沿用residential_001及获准12层诊断条件。
 
@@ -237,9 +281,10 @@ ETABS正式复跑176.47s，状态SUCCESS仅指工况及响应检查，不是跨�
 
 ## 后续批次
 
-当前弹性跨软件一致性诊断按已知单元/连接差异收口；不再重复端区、材料、积分位置或释放系数校准。
-不直接用中点、无梁或换壳反事实替换生产方案；整栋网格敏感性保留为独立可靠性门槛。
+先保留梁全部刚度，针对已定位的MY/钻转通道比较直接共节点与按实际梁截面尺寸定义的连接区转角传递。
+不通过释放、随意弹簧或强制割线转角等同钻转来拟合；不重查已通过的MX、单墙等项目。
+不直接用中点、无梁或换壳反事实替换生产方案；整栋网格敏感性继续保留为独立可靠性门槛。
 已通过单墙、子系统周期及主响应不再核查校准；不再进行单墙水平离散/泊松补查。
-下一批优先补重力荷载传递，再对地震谱/组合及规范配筋作独立复核。
+带梁传递问题明确后，再补重力荷载传递，对地震谱/组合及规范配筋作独立复核。
 分析基础与几何受理问题解决后，才进入正式优化、代理兼容性验证及等预算策略比较。
 人工审批界面、磁盘恢复、DWG和工程成果输出仍属于后续阶段。

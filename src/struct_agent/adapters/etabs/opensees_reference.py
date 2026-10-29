@@ -16,7 +16,8 @@ from .results import roof_equilibrium
 from .reference_mesh import ReferenceMesh,refine
 
 
-def run_reference(spec: ResidentialSpec, directory: Path, *, mesh: ReferenceMesh | None=None) -> dict[str,Any]:
+def run_reference(spec: ResidentialSpec, directory: Path, *, mesh: ReferenceMesh | None=None,
+                  joint_rotation: bool=False) -> dict[str,Any]:
     import openseespy.opensees as ops
     from struct_agent.adapters.fea import native_topology, native_params
     from struct_agent.adapters.physics import analysis_signature
@@ -24,8 +25,10 @@ def run_reference(spec: ResidentialSpec, directory: Path, *, mesh: ReferenceMesh
     from struct_agent._vendor.shearwall_modeling.parametric.analysis import build_model_config_from_params
     directory = directory.resolve()
     mesh = mesh or ReferenceMesh()
+    if joint_rotation and (mesh.remove_beam_stiffness or mesh.beam_bending_released):
+        raise ValueError('Joint diagnostic requires all beam stiffness and default connections')
     create_run(directory,seed=0,inputs={},config={'purpose':'ELASTIC_LATERAL_DIAGNOSTIC',
-        'spec':spec.model_dump(mode='json'),'diagnostic_mesh':mesh.model_dump()})
+        'spec':spec.model_dump(mode='json'),'diagnostic_mesh':mesh.model_dump(),'joint_rotation':joint_rotation})
     started = perf_counter()
     try:
         ops.logFile(str(directory/'opensees.log'),'-noEcho')
@@ -49,6 +52,17 @@ def run_reference(spec: ResidentialSpec, directory: Path, *, mesh: ReferenceMesh
         periods = [2*math.pi/math.sqrt(e) for e in eigenvalues]
         shapes = [[[ops.nodeEigenvector(p,mode,dof) for dof in (1,2,6)] for p in build.master_nodes] for mode in range(1,13)]
         bases = sorted({p for u in build.wall_base_units for p in u.base_nodes})
+        joint = None
+        if joint_rotation:
+            from .joint_mechanics import joint_plan
+            from .joint_results import opensees_joint_case,opensees_joint_probes
+            from struct_agent._vendor.shearwall_modeling.builders.mvlem_frame import _beam_section_props
+            plan = joint_plan(spec)
+            beam = build.beam_element_units[0]
+            area,j,iy,iz = _beam_section_props(beam.width,beam.depth)
+            material = cfg.resolve_story_profiles()[0].material
+            joint = {'plan':plan,'section':{'E':float(material.E),'G':float(material.G),
+                'A':area,'J':j,'Iy':iy,'Iz':iz},'cases':{},'units':'N_m_rad'}
         static,checks = {},{}
         for index,direction in enumerate(('X','Y'),1):
             ops.reset()
@@ -89,7 +103,17 @@ def run_reference(spec: ResidentialSpec, directory: Path, *, mesh: ReferenceMesh
                 checks[direction]['released_beam_bending_zero'] = maximum <= limit
                 static['ROOF_'+direction]['beam_local_forces_n_nm'] = local
                 static['ROOF_'+direction]['max_released_end_moment_nm'] = maximum
+            if joint is not None:
+                joint['cases']['ROOF_'+direction] = opensees_joint_case(plan,build)
             ops.remove('loadPattern',index)
+        if joint is not None:
+            from .joint_mechanics import assess_joint
+            joint['cases'].update(opensees_joint_probes(plan,build,bases))
+            write_json(directory/'joint_raw.json',joint)
+            assessment = assess_joint(joint)
+            write_json(directory/'joint_checks.json',assessment)
+            if not assessment['verified']:
+                raise ValueError('OpenSees joint mechanics checks failed; inspect retained native vectors')
         result = {'purpose':'RESIDENTIAL_ELASTIC_LATERAL_DIAGNOSTIC','units':'N_m_kg_s','solver':ops.version(),
             'analysis_signature':analysis_signature(),'periods_s':periods,'floor_mode_shapes':shapes,
             'static':static,'checks':checks,'verified':all(all(c.values()) for c in checks.values()),

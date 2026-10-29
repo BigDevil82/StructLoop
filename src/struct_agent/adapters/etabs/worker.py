@@ -9,7 +9,7 @@ from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import ErrorRecord
 from .benchmark import build_and_analyze
 from .client import session
-from .contracts import ETABSRequest, CantileverSpec, SingleWallSpec, StructuralBatchSpec, ConnectionAuditSpec, ConnectionStudySpec, ModelFormReviewSpec
+from .contracts import ETABSRequest, CantileverSpec, SingleWallSpec, StructuralBatchSpec, ConnectionAuditSpec, ConnectionStudySpec, ModelFormReviewSpec, JointRotationSpec
 
 
 def main() -> int:
@@ -38,6 +38,9 @@ def main() -> int:
             elif isinstance(spec, ModelFormReviewSpec):
                 from .model_form_review import build_review
                 result = build_review(client, spec, directory, config)
+            elif isinstance(spec, JointRotationSpec):
+                from .joint_study import build_joint_study
+                result = build_joint_study(client,spec,directory,config)
             else:
                 from .residential import build_and_analyze as residential
                 result = residential(client,spec,directory,beam_theory=config.beam_theory,
