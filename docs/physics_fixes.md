@@ -4,13 +4,11 @@
 > 当前计算指纹为e49011b22005316c54e0bfcc858207ddaeb65a0935ddf3430631badae595ac62；此前 `_04/_05/_06` 记录均为历史数据。
 > 现用12层真实回归由 `configs/real_fea_reference.json` 绑定；独立对照证据、适用边界及未解决差异见 `etabs_cross_validation.md`。
 
-> 2026-10-29补充：材料估算错误继续修正，当前独立诊断为 `member_diagnostics_{baseline,symmetry}_05`。
-> 本文 `_04` 的力学诊断保留为历史工件，材料标签不能直接用于当前优化。详见 `optimization_iteration.md`。
-> 后续墙肢设计单位修正及“短墙转梁”撤销见 `model_semantics.md`；当前固定输入诊断为 `_06`。
-> 本文100 mm最小长度及短墙转梁的历史处理不再作为当前建模规则。
+> 旧28层中间诊断已退役并清理，删除目录摘要见 `cleanup_2026-10-29.json`；旧文档见Git提交ef2c915。
+> 当前仍存在整栋网格敏感性，见 `x_displacement_checks.md`，不能把测试通过等同于工程验收。
 
 按用户明确授权直接修复确认的实现 bug；不保留错误算法的旧版运行分支。
-真实工程条件仍未补充，本轮继续使用已获准的 28 层等条件做冒烟。
+真实工程条件仍未补充；28层为早期冒烟设置，当前独立诊断采用获准的12层。
 
 ## 已修正
 
@@ -23,7 +21,7 @@
 | 墙剪力按激励全局方向截取 | 始终投影到墙肢自身平面方向，排除面外分量 | 旋转墙肢的力积分不变量 |
 | CQC 将特征值比误作频率比 | 先取 omega=sqrt(lambda)，再计算相关系数 | ANSYS 1% 阻尼近频振型例，相关系数约0.276；零阻尼退化SRSS |
 | 未预测的小梁间隙被补成墙、零长度区间留下伪墙 | 未预测区间为梁；零区间去除；间隙合并用实际长度单位 | 几何覆盖与区间单元测试 |
-| min_length 未落实、近重合节点留下1 mm墙 | 复用2 mm容差吸附节点并进行毫米取整；短墙转梁保留边界；不跨T节点强行合并 | 两个工程布局均无小于0.1 m的墙，连接拓扑通过 |
+| min_length 未落实、近重合节点留下1 mm墙 | 坐标容差处理与物理构件类别分开；保留短墙原类别并审查，不跨T节点强行合并 | 当前生成几何审查与极短物理墙肢前置阻断测试；不会把短墙转梁当作修复 |
 | 长度<=0.5 m的墙未执行配筋却可能显示设计通过 | 所有建模墙肢执行配筋设计，缺少设计结果视为错误 | 管线调用测试及实际构件-楼层覆盖核验 |
 | 普通/详细入口重复汇总逻辑 | 共用 parametric/summary.py | 普通真实入口与详细入口的35字段独立复算 |
 | 更改计算后仍可能命中旧缓存或误用旧代理标签 | 结果与缓存绑定当前分析实现指纹；真实代理须声明匹配的训练指纹 | 缓存隔离、模型不兼容拒绝测试 |
@@ -43,20 +41,13 @@
 
 ## 当前输入与真实输出
 
-- 建筑图仍为 `configs/test_case.json` 中同一份 DXF，未改变图纸和RC-GNN权重。
-- 当前原布局：`outputs/residential_001_rcgnn_02/`，149墙、81梁、43楼板区域。
-- 当前对称布局：`outputs/residential_001_symmetry_03/`，187墙、73梁、43楼板区域。
-- 当前详细复算：`outputs/member_diagnostics_{baseline,symmetry}_04/`，各1次真实建筑FEA。
-- 当前 Agent 冒烟：`outputs/physics_fix_agent_02/`，1次真实FEA，遵守总预算并正常结束。
-- 新实现指纹：`981ea4234286f985cdfeb0fc4181c20bd245c26e82362dba6e7034344b625644`。
+默认建筑为 `configs/test_case.json`，当前布局为 `outputs/residential_001_rcgnn_03/`。
+12层条件见 `configs/etabs_12_story_spec.json`，参数见 `outputs/residential_12_inputs_01/design.json`。
+详细结果由 `configs/real_fea_reference.json` 按哈希绑定；目前不可行，墙配筋55项、墙剪压3项、梁剪压16项失败。
+这些是本地简化检查结果，ETABS重力/反应谱/配筋尚未完成独立验证。
 
-两个最终详细复算均求解成功、结构不可行。原布局墙/梁配筋失败为133/7项，
-对称布局为506/28项，均按构件-楼层计数；4172/5236项墙检查分别全部执行，无配筋漏检。
-两布局的墙剪压控制指标约0.281888/0.295153（对应限值0.15），
-梁约0.288996/0.300145（对应限值0.15）。这些是修正后的失败，保留为反馈。
-
-中间 `_03` 诊断、`physics_fix_agent_01` 在发现控制组合选择问题前运行，不作为最终验证或论文标签。
-旧工件不回写，也不强求新结果与错误历史数值相等。
+此前各 `_04/_05/_06` 对应不同阶段实现，不能沿用其数值或旧代理标签。
+早期诊断的组合、几何与漏检问题已修正，逐轮开发记录保存在Git历史中，不再作为当前使用说明。
 
 ## CASINO 权重边界与使用
 
@@ -67,9 +58,9 @@
 模型兼容性不满足时明确 BLOCKED，不进行筛选。仅 mock 集成可用旧权重检验软件机械行为。
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/residential_001_rcgnn_02/layout.json --spec configs/reference_spec.json --design outputs/physics_fix_inputs_01/design_baseline.json --run outputs/new_diagnostic_run
-.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_02/layout.json --rooms outputs/residential_001_rcgnn_02/room_graph.json --spec configs/reference_spec.json --run outputs/new_agent_run --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 2 --population 2 --generations 1
+.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --layout outputs/residential_001_rcgnn_03/layout.json --spec configs/etabs_12_story_spec.json --design outputs/residential_12_inputs_01/design.json --run outputs/new_diagnostic_run
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_03/layout.json --rooms outputs/residential_001_rcgnn_03/room_graph.json --spec configs/etabs_12_story_spec.json --run outputs/new_agent_run --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 2 --population 2 --generations 1
 ```
 
 诊断入口接受显式 `--design`；可用 `--reference` 对同一当前实现的记录做复算对照，拒绝跨实现对照。
-使用新输出目录，避免覆盖。下一步基于正确标签验证代理模型，并依据当前控制构件完善布局/参数优化。
+使用新输出目录，避免覆盖。当前真实GA会被极短物理墙肢门槛拦截；先定位并解决离散/连接问题，再验证代理标签及正式优化。

@@ -22,21 +22,24 @@ LLM 不接收 shell 工具，不修改几何、预算、求解结果或审批记
 审计保留请求、最终回答、usage、错误类型/信息/traceback 和每次尝试，不保存模型私有推理文本。
 token 为服务返回值；缺失 usage 单列，不能据此推定费用为零。
 
-首次真实 API 探针在 `outputs/phase4_api_probe_01/`，使用明确标记的合成状态。
+首次真实API探针使用明确标记的合成状态；该开发探针已清理，历史记录见Git提交ef2c915。实际LLM/FEA轨迹保留于 `outputs/phase4_real_llm_01/`。
 模型合法返回人工检查，但把 `paused` 与 `engineering_review=PENDING` 误解为续作审批缺失。
 提示词已明确：前者是正常代际边界；后者指最终工程交付审查，不阻止已授权的优化。
-原始探针保留，不改写第一次结果。
+该问题及提示修正保存在Git历史中，原探针工件本次已清理。
 
 ## 真实运行
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_01/layout.json --rooms outputs/residential_001_rcgnn_01/room_graph.json --spec configs/reference_spec.json --run outputs/my_agent_run --case-id residential_001 --purpose smoke_only --policy llm --seed 42 --budget-fea 5 --population 3 --generations 2 --screening-threshold 0
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_03/layout.json --rooms outputs/residential_001_rcgnn_03/room_graph.json --spec configs/etabs_12_story_spec.json --run outputs/new_agent_run --case-id residential_001 --purpose smoke_only --policy llm --seed 42 --budget-fea 5 --population 3 --generations 2
 ```
+
+上例使用当前12层输入；极短物理墙肢尚未消解时会在前置检查处阻断，不应切换旧布局绕过门槛。
+整栋分析网格也尚未收敛。此处展示接口，历史真实调用链冒烟不代表当前模型已经满足工程要求。
 
 `--policy fixed|rules|llm` 使用相同评价服务、候选池与 CASINO 配置。
 `--layout` 可重复指定有顺序的预置候选池；当前默认工程图只有一个既有 RC-GNN 方案。
-`--purpose` 强制说明用途；用户已授权沿用旧 28 层、8 度、II 类场地、第 1 组条件，**仅作冒烟验证**。
-筛选阈值 0 仅为暴露真实调用链，不表示 CASINO 效率评价设置。
+`--purpose` 强制说明用途；旧28层条件只获准冒烟，后续另获准12层用于软件诊断；均非正式工程条件确认。
+早期筛选阈值0用于暴露真实调用链，不表示CASINO效率设置；当前真实优化默认禁用未验证的代理权重。
 一次决策推进一代，可能产生多次 FEA；共享服务在每次实际求解前检查总预算，含失败尝试。
 
 继续动作保留同一会话。仅成功但不可行的反馈允许提出切换；求解/执行错误只能请求人工检查。

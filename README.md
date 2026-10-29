@@ -48,7 +48,7 @@ uv pip install --python .venv/Scripts/python.exe -e .
 后续真实生成、优化与闭环测试使用此图；L17_101 仅保留历史迁移回归，toy_01 仅保留 mock 测试。
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.cli generate --seed 42 --run outputs/residential_001_rcgnn_01
+.venv/Scripts/python.exe -m struct_agent.cli generate --seed 42 --run outputs/new_residential_generation
 ```
 
 默认入口校验 DXF 哈希并使用旧项目为此图指定的 `category=2`。
@@ -64,12 +64,13 @@ uv pip install --python .venv/Scripts/python.exe -e .
 ## 固定布置参数优化
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.cli optimize --layout outputs/residential_001_rcgnn_01/layout.json --rooms outputs/residential_001_rcgnn_01/room_graph.json --spec configs/reference_spec.json --seed 42 --budget-fea 20 --population 24 --generations 20 --run outputs/residential_001_optimization_01
+.venv/Scripts/python.exe -m struct_agent.cli optimize --layout outputs/residential_001_rcgnn_03/layout.json --rooms outputs/residential_001_rcgnn_03/room_graph.json --spec configs/etabs_12_story_spec.json --seed 42 --budget-fea 20 --population 24 --generations 20 --run outputs/new_residential_optimization
 ```
 
 `reference_spec.json` **仅为迁移回归示例**，显式列出了旧入口的 28 层、2.9m 层高、
 120mm 板厚及材料/地震参数。正式项目条件、荷载与规范版本仍需工程师确认。
-上述优化命令仅是接口用法，`reference_spec.json` 尚未确认为新工程的真实设计条件。
+上述命令采用获准用于诊断的12层条件，仍仅展示接口用法；当前布局含极短物理墙肢，会在真实优化前置检查处阻断。
+整栋网格尚未收敛，先解决分析基础问题，再开展正式优化。
 也可提供符合公共 Schema 的人工修改方案。
 `--rooms` 必须对应该建筑，CASINO 每次从实际墙线重新编码布局特征，禁止套用另一布置缓存。
 
@@ -156,7 +157,7 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 已补充可选构件级 FEA 诊断，可复算某条真实记录并保留控制构件、组合剪力及配筋消息：
 `.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --help`。
 极短墙段、内力组合/包络、局部坐标及墙配筋漏检等问题已直接修复，见 [计算逻辑修正记录](docs/physics_fixes.md)。
-既有固定输入的当前诊断为 `member_diagnostics_{baseline,symmetry}_06`，分析分段已按直墙肢汇总。
+分析分段已按直墙肢汇总；当前12层回归由 `configs/real_fea_reference.json` 绑定，旧28层诊断已退役。
 新生成 `residential_001_rcgnn_03` 保留短墙原类别并输出几何审查；未消解短墙时真实优化会前置阻断。
 本机已找到YJK 2025并验证官方API导入；成熟前处理与验算尚未接通，见 [模型语义与软件对照](docs/model_semantics.md)。
 真实优化默认直接 FEA；旧代理权重在与修正后的标签验证兼容前不参与筛选。
@@ -186,3 +187,4 @@ ETABS小模型与12层住宅对照见 [docs/etabs_cross_validation.md](docs/etab
 本地仓库使用 `main` 分支。每次任务完成并验证后更新进度记录、检查暂存内容并提交；不自动推送远端。
 源码、测试、配置、合成 fixture 与数据哈希受版本管理；`.venv`、真实 DXF/DWG、权重、缓存、日志、
 `outputs/` 和密钥文件被忽略。真实案例需保留本地副本或从配置中记录的来源恢复，再校验 SHA256。
+输出保留规则、当前证据入口和清理记录见 [输出管理](docs/output_management.md)。
