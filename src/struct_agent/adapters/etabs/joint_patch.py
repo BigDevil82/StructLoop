@@ -11,6 +11,7 @@ import numpy as np
 from struct_agent.io.artifacts import create_run,write_json
 from .contracts import ResidentialSpec
 from .residential_input import prepare
+from .patch_boundary import prescribe_field
 
 
 def rotation_patch(spec: ResidentialSpec, formulation: str) -> dict[str,Any]:
@@ -43,13 +44,7 @@ def rotation_patch(spec: ResidentialSpec, formulation: str) -> dict[str,Any]:
                 ops.element('ShellDKGQ' if formulation=='shell_dkgq' else 'ASDShellQ4',1,1,2,3,4,1)
             rotation = np.zeros(3)
             rotation[axis] = 1e-5
-            for tag,point in enumerate(xyz,1):
-                displacement = np.r_[np.cross(rotation,point),rotation]
-                for dof,value in enumerate(displacement,1):
-                    ops.setNodeDisp(tag,dof,float(value),'-commit')
-                if not np.allclose(ops.nodeDisp(tag),displacement,atol=1e-14,rtol=1e-12):
-                    raise ValueError('Prescribed rigid-body displacement was not retained by the native nodes')
-            ops.updateElementDomain()
+            prescribe_field({tag:np.r_[np.cross(rotation,point),rotation] for tag,point in enumerate(xyz,1)},float(np.sqrt(e*thickness)))
             force = np.asarray(ops.eleForce(1)).reshape(4,6)
             scaled = force.copy()
             scaled[:,3:] /= max(length,height)
@@ -68,8 +63,11 @@ def main() -> None:
     parser.add_argument('--run',type=Path,required=True)
     args = parser.parse_args()
     spec = ResidentialSpec.model_validate_json(json.dumps(json.loads(args.source_manifest.read_text(encoding='utf-8'))['config']['spec']))
-    create_run(args.run,seed=0,inputs={'manifest':args.source_manifest,'executed_patch_source':Path(__file__)},
+    create_run(args.run,seed=0,inputs={'manifest':args.source_manifest,'executed_patch_source':Path(__file__),
+        'prescribed_field_source':Path(__file__).with_name('patch_boundary.py')},
         config={'purpose':'RIGID_ROTATION_PATCH','spec':spec.model_dump(mode='json')})
+    for name in ('joint_patch.py','patch_boundary.py'):
+        (args.run/name).write_bytes(Path(__file__).with_name(name).read_bytes())
     result = {name:rotation_patch(spec,name) for name in ('mvlem','shell_dkgq','shell_asd')}
     write_json(args.run/'results.json',result)
     print({name:row['verified'] for name,row in result.items()})

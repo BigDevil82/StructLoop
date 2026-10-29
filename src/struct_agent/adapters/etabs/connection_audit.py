@@ -54,6 +54,16 @@ def inspect_connections(client: ETABSClient, spec: ConnectionAuditSpec, director
     m, call = client.model, client.call
     call('OpenCopiedDiagnostic',m.File.OpenFile,str(copy))
     call('ConnectionUnits',m.SetPresentUnits,10)
+    if spec.area_mesh_only:
+        from .area_mesh_audit import inspect_area_mesh
+        result = inspect_area_mesh(client)
+        result.update(source_unchanged=sha256(spec.model)==spec.model_sha256,
+            copy_unchanged=sha256(copy)==spec.model_sha256,source_cache_hashes=caches,
+            source_caches_unchanged=all(sha256(Path(path))==digest for path,digest in caches.items()))
+        if not result['source_unchanged'] or not result['copy_unchanged'] or not result['source_caches_unchanged']:
+            raise ValueError('Area mesh audit mutated an input file')
+        write_json(directory/'area_mesh.json',result)
+        return result
     count, names = call('ConnectionFrameNames',m.FrameObj.GetNameList)
     if count <= 0 or count != len(names):
         raise ValueError('No diagnostic frames to inspect')
@@ -106,11 +116,12 @@ def main() -> None:
     parser.add_argument('--run',type=Path,required=True)
     parser.add_argument('--read-generated-lines',action='store_true')
     parser.add_argument('--detailed-axes',action='store_true')
+    parser.add_argument('--area-mesh-only',action='store_true')
     args = parser.parse_args()
     model = args.model.resolve()
     result = run_verification(ConnectionAuditSpec(model=model,model_sha256=sha256(model),
-        read_generated_lines=args.read_generated_lines,detailed_axes=args.detailed_axes),
-        args.run,ETABSConfig(timeout_s=180.))
+        read_generated_lines=args.read_generated_lines,detailed_axes=args.detailed_axes,area_mesh_only=args.area_mesh_only),
+        args.run,ETABSConfig(timeout_s=600. if args.area_mesh_only else 180.))
     print(result['status'])
     if result['status'] != 'SUCCESS':
         raise RuntimeError('Read-only connection audit failed; inspect retained worker error')

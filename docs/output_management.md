@@ -33,6 +33,16 @@ outputs/
 | 原整栋实际端区/梁轴只读补查 | 来源 `outputs/current/model_form_original_01/`；有效 `model_form_original_audit_02/`，失败 `_01`保留；未重新求解 |
 | 保留梁全部刚度的节点传递对照 | `outputs/current/full_stiffness_joint_01/`；汇总 `outputs/reports/full_stiffness_joint_summary_01/`，索引 `configs/joint_rotation_evidence.json` |
 | 节点转动符号排除检查 | 有效 `outputs/current/full_stiffness_joint_patch_02/`；`_01`因未逐DOF提交位移而无效，保留但排除结论 |
+| 有梁有限连接区及整栋汇总 | 说明 `docs/beam_wall_resolution.md`；最终18组 `outputs/reports/beam_wall_resolution_02/`，`_01`首16组保留；`configs/beam_wall_resolution_evidence.json` |
+| 同网格点连接/有限梁高接口 | `outputs/{current,reports}/beam_interface_substructure_01/`；竖向8/16分宏模型 `beam_interface_substructure_fine_01/` |
+| 整栋有限连接区 | 有效 `outputs/{current,reports}/beam_interface_whole_resume_02/`、`beam_interface_whole_fine_01/`；前者严格复用 `beam_interface_whole_01/etabs/`成功原生工件 |
+| 无效整栋数值分解 | `outputs/current/beam_interface_whole_01/opensees/`、`beam_interface_whole_resume_01/`保留UmfPack错误，均排除数值配对 |
+| 宏单元膜内解析应变 | 有效 `outputs/current/beam_interface_membrane_patch_04/`；`_01/_02/_03`的设置/横向力解释无效且保留，不进入结论 |
+| 静力规定场刚体检查 | 有效 `outputs/current/beam_interface_rigid_patch_02/`含执行源与SP辅助源；替代仅提交节点位移的旧检查作为证据 |
+| 实际墙分析网格只读审查 | 有效 `outputs/current/beam_interface_area_audit_03/`；`_01/_02`为锁屏期间启动失败，完整错误与清理记录保留 |
+| 显式边约束/双向墙网格 | `outputs/{current,reports}/beam_interface_horizontal_01/`；原楼层质量/惯量/质心与全部梁保留，原生角点/分析单元读回 |
+| 未启动的水平四分组 | `outputs/current/beam_interface_horizontal_fine_01/`，锁屏启动错误保留；BLOCKED且没有求解数值，不进入配对 |
+| 未采用的可选数值重排 | `outputs/current/beam_interface_ordering_01/`；一分结果/二分部分工件及cancellation/classification保留，不作为新增物理配对或速度收益证据 |
 | 全部38个已完成运行 | `outputs/archive/evidence_20261029.zip`，原始目录名保持不变 |
 
 归档整理时建立的当前输入、回归文件和原两份报告是逐字节副本，不是重新求解结果。

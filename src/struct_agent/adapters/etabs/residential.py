@@ -10,6 +10,7 @@ from .client import ETABSClient, rows
 from .contracts import ResidentialSpec
 from .residential_input import prepare
 from .results import roof_equilibrium
+from .interface_geometry import BeamInterface,interface_geometry
 
 DISPLACEMENT_FIELDS = ('object','element','case','step_type','step','u1','u2','u3','r1','r2','r3')
 
@@ -27,16 +28,26 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
                       wall_vertical_subdivisions: int=1,
                       connection_mode: Literal['default','zero_offsets','pinned_bending','walls_only'] | None=None,
                       release_scope: Literal['all','wall_to_wall']='all',
-                      joint_rotation: bool=False) -> dict[str,Any]:
+                      joint_rotation: bool=False, interface: BeamInterface | None=None,
+                      static_only: bool=False, horizontal_subdivisions: int=1,
+                      edge_constraints: bool | None=None) -> dict[str,Any]:
     from struct_agent.adapters.fea import native_topology
     from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers
     data = prepare(spec)
     if joint_rotation and connection_mode != 'default':
         raise ValueError('Joint rotation diagnostic retains default full-stiffness beam connections')
-    if not 1<=wall_vertical_subdivisions<=4:
+    if not 1<=wall_vertical_subdivisions<=16:
         raise ValueError('Bounded wall subdivision count required')
+    if horizontal_subdivisions not in (1,2,4):
+        raise ValueError('Controlled horizontal shell divisions are 1, 2 or 4')
     if connection_mode not in (None,'default','zero_offsets','pinned_bending','walls_only'):
         raise ValueError('Unknown diagnostic beam connection mode')
+    if interface is not None and connection_mode not in (None,'default'):
+        raise ValueError('Interface diagnostic retains all default beam stiffness')
+    geometry = interface_geometry(spec,wall_vertical_subdivisions,interface) if interface is not None else None
+    story_levels = (geometry['story_levels'] if geometry is not None else
+        [[story-1+step/wall_vertical_subdivisions for step in range(wall_vertical_subdivisions+1)]
+            for story in range(1,spec.project.stories+1)])
     m, call, v = client.model, client.call, spec.design.values
     call('InitializeNewModel',m.InitializeNewModel,10)
     call('NewBlank',m.File.NewBlank)
@@ -79,22 +90,26 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     for label in sorted(set(source_to_pier.values())-existing):
         call('DefinePier',m.PierLabel.SetPier,label)
     wall_points = {p for member in data.layout.members if member.role=='wall' for p in (member.start,member.end)}
+    from .horizontal_mesh import wall_mesh_points
+    wall_segments = {i:wall_mesh_points(member,horizontal_subdivisions)
+        for i,member in enumerate(data.layout.members) if member.role=='wall'}
+    wall_points.update(p for points in wall_segments.values() for p in points)
+    floor_points = set(data.points)|wall_points
     if connection_mode == 'pinned_bending' and release_scope == 'all' and any(
             member.start not in wall_points or member.end not in wall_points
             for member in data.layout.members if member.role != 'wall'):
         raise ValueError('All-end releases leave unsupported vertical joints')
     nodes = {}
     for level in range(n+1):
-        for point in sorted(wall_points if level==0 else set(data.points)):
+        for point in sorted(wall_points if level==0 else floor_points):
             name, = call('AddNode',m.PointObj.AddCartesian,*point,level*spec.project.story_height_m,'')
             nodes[level,point] = name
             if level==0:
                 call('BaseFix',m.PointObj.SetRestraint,name,[True]*6)
             elif connection_mode == 'walls_only' and point not in wall_points:
                 call('AuxiliaryNullDofs',m.PointObj.SetRestraint,name,[False,False,True,True,True,False])
-    for story in range(1,n+1):
-        for step in range(1,wall_vertical_subdivisions):
-            level = story-1+step/wall_vertical_subdivisions
+    for levels in story_levels:
+        for level in levels[1:-1]:
             for point in sorted(wall_points):
                 name, = call('AddInternalWallNode',m.PointObj.AddCartesian,*point,level*spec.project.story_height_m,'')
                 nodes[level,point] = name
@@ -103,7 +118,7 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
         story = floor.story
         diaphragm = f'SL_D{story}'
         call('RigidDiaphragm',m.Diaphragm.SetDiaphragm,diaphragm,False)
-        for point in data.points:
+        for point in sorted(floor_points):
             call('AssignDiaphragm',m.PointObj.SetDiaphragm,nodes[story,point],3,diaphragm)
         master, = call('AddMaster',m.PointObj.AddCartesian,*data.centre_xy_m,floor.elevation_m,'',f'MASTER_{story}','Global',True)
         call('MasterDiaphragm',m.PointObj.SetDiaphragm,master,3,diaphragm)
@@ -113,15 +128,20 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
         for index,member in enumerate(data.layout.members):
             a,b = nodes[story,member.start],nodes[story,member.end]
             if member.role=='wall':
-                for part in range(wall_vertical_subdivisions):
-                    lower,upper = story-1+part/wall_vertical_subdivisions,story-1+(part+1)/wall_vertical_subdivisions
-                    result = call('AddWall',m.AreaObj.AddByPoint,4,
-                        [nodes[lower,member.start],nodes[lower,member.end],nodes[upper,member.end],nodes[upper,member.start]],
-                        '',f'W{round(floor.wall_thickness_m*1000)}')
-                    name = result[-1]
-                    call('WallPier',m.AreaObj.SetPier,name,source_to_pier[index])
-                    mapping.append({'story':story,'source_id':member.member_id,'role':member.role,
-                        'etabs_object':name,'mesh_piece':part})
+                for part,(lower,upper) in enumerate(zip(story_levels[story-1],story_levels[story-1][1:])):
+                    for horizontal,(left,right) in enumerate(zip(wall_segments[index],wall_segments[index][1:])):
+                        result = call('AddWall',m.AreaObj.AddByPoint,4,
+                            [nodes[lower,left],nodes[lower,right],nodes[upper,right],nodes[upper,left]],
+                            '',f'W{round(floor.wall_thickness_m*1000)}')
+                        name = result[-1]
+                        call('WallPier',m.AreaObj.SetPier,name,source_to_pier[index])
+                        if edge_constraints is not None:
+                            call('ExplicitAreaEdgeConstraint',m.AreaObj.SetEdgeConstraint,name,edge_constraints)
+                            actual, = call('ReadAreaEdgeConstraint',m.AreaObj.GetEdgeConstraint,name)
+                            if bool(actual)!=edge_constraints:
+                                raise ValueError('Area edge constraint readback mismatch')
+                        mapping.append({'story':story,'source_id':member.member_id,'role':member.role,
+                            'etabs_object':name,'mesh_piece':part,'horizontal_piece':horizontal})
             else:
                 if connection_mode == 'walls_only':
                     continue
@@ -144,6 +164,11 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
                     connections[name] = assigned
                 mapping.append({'story':story,'source_id':member.member_id,'role':member.role,'etabs_object':name})
         print(f'STAGE residential_floor_{story}_built',flush=True)
+    interface_groups = []
+    if geometry is not None:
+        from .interface_etabs import add_interfaces
+        interface_groups = add_interfaces(client,nodes,geometry)
+        write_json(directory/'interface_geometry.json',{'geometry':geometry,'native_groups':interface_groups})
     call('PrescribedMassSource',m.PropMaterial.SetMassSource_1,False,True,False,0,[],[])
     mass_source = call('MassSourceReadback',m.PropMaterial.GetMassSource_1)
     expected_mass = [[f.mass_kg,f.mass_kg,0.,0.,0.,f.inertia_kg_m2] for f in data.floors]
@@ -154,7 +179,7 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     area_names = call('ReadAreaNames',m.AreaObj.GetNameList)
     frame_names = call('ReadFrameNames',m.FrameObj.GetNameList)
     point_names = call('ReadPointNames',m.PointObj.GetNameList)
-    count_checks = {'walls':area_names[0]==n*wall_vertical_subdivisions*sum(member.role=='wall' for member in data.layout.members),
+    count_checks = {'walls':area_names[0]==horizontal_subdivisions*sum(len(levels)-1 for levels in story_levels)*sum(member.role=='wall' for member in data.layout.members),
         'beams':frame_names[0]==(0 if connection_mode == 'walls_only' else n*sum(member.role!='wall' for member in data.layout.members)),
         'points':point_names[0]==len(nodes)+len(masters)}
     coordinate_error = 0.
@@ -167,7 +192,8 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     write_json(directory/'geometry_readback.json',{'counts':{'areas':area_names[0],'frames':frame_names[0],'points':point_names[0]},
         'count_checks':count_checks,'max_coordinate_error_m':coordinate_error,
         'beam_section_properties':{role:call('ReadBeamSection',m.PropFrame.GetSectProps,role) for role in ('primary','secondary')},
-        'beam_theory':beam_theory,'beam_modifiers':modifiers,'wall_vertical_subdivisions':wall_vertical_subdivisions})
+        'beam_theory':beam_theory,'beam_modifiers':modifiers,'wall_vertical_subdivisions':wall_vertical_subdivisions,
+        'horizontal_subdivisions':horizontal_subdivisions,'explicit_edge_constraints':edge_constraints})
     write_json(directory/'model_mapping.json',{'origin_xy_m':data.origin_xy_m,'centre_xy_m':data.centre_xy_m,
         'source_members':len(data.layout.members),'objects':mapping,'masters':masters,'mass_kg':actual_mass,
         'mass_source':mass_source,'slab_stiffness':'rigid diaphragm only, matching MVLEM protocol',
@@ -181,7 +207,8 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
         force = [0.]*6
         force[0 if direction=='X' else 1] = spec.roof_force_n
         call('RoofLoad',m.PointObj.SetLoadForce,masters[-1],case,force,True)
-    call('ModalCase',m.LoadCases.ModalEigen.SetCase,'MODAL_CHECK')
+    if not static_only:
+        call('ModalCase',m.LoadCases.ModalEigen.SetCase,'MODAL_CHECK')
     call('DisableDefaultCases',m.Analyze.SetRunCaseFlag,'',False,True)
     joint_cases = {}
     if joint_rotation:
@@ -195,7 +222,7 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
             force[probe['dof']] = probe['moment_nm']
             call('JointMomentLoad',m.PointObj.SetLoadForce,point,case,force,True)
         joint_cases = plan['probes']
-    cases = ('ROOF_X','ROOF_Y','MODAL_CHECK',*joint_cases)
+    cases = ('ROOF_X','ROOF_Y',*(('MODAL_CHECK',) if not static_only else ()),*joint_cases)
     for case in cases:
         call('Enable '+case,m.Analyze.SetRunCaseFlag,case,True)
     call('SaveBeforeAnalysis',m.File.Save,str(directory/'model.EDB'))
@@ -227,6 +254,11 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
             spec.roof_force_n,case[-1])
         checks[case]['finite_floor_responses'] = all(math.isfinite(f[0][key]) for f in floors for key in ('u1','u2','r3'))
         outputs[case] = {'floors':floors,'base_reactions':reactions,'reaction_reference_xyz_m':raw[-3:]}
+        if interface_groups:
+            from .interface_etabs import read_interface_residual
+            residual = read_interface_residual(client,interface_groups)
+            outputs[case]['interface_constraints'] = residual
+            checks[case]['interface_constraints'] = residual['verified']
         if connection_mode is not None:
             beam_forces = {}
             for item in mapping:
@@ -249,12 +281,18 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     if joint_rotation:
         from .joint_results import etabs_joint_results
         from .joint_mechanics import assess_joint
-        joint = etabs_joint_results(client,spec,nodes,mapping)
+        joint = etabs_joint_results(client,spec,nodes,mapping,interface=geometry)
         write_json(directory/'joint_raw.json',joint)
         assessment = assess_joint(joint)
         write_json(directory/'joint_checks.json',assessment)
         if not assessment['verified']:
             raise ValueError('Joint mechanics checks failed; inspect retained native vectors')
+    if static_only:
+        return {'purpose':'FULL_STIFFNESS_INTERFACE_STATIC_DIAGNOSTIC','units':'N_m_kg_s',
+            'verified':all(all(c.values()) for c in checks.values()),'checks':checks,'case_status':state,
+            'static':outputs,'modes':[],'floor_mode_shapes':[],'beam_theory':beam_theory,
+            'wall_vertical_subdivisions':wall_vertical_subdivisions,'interface':interface.model_dump() if interface is not None else None,
+            'prescribed_floor_masses_kg':[f.mass_kg for f in data.floors],'engineering_feasibility':'NOT_EVALUATED'}
     call('DeselectOutput',m.Results.Setup.DeselectAllCasesAndCombosForOutput)
     call('SelectModal',m.Results.Setup.SetCaseSelectedForOutput,'MODAL_CHECK')
     call('AllModeShapes',m.Results.Setup.SetOptionModeShape,1,12,True)

@@ -13,7 +13,7 @@ class ETABSConfig(Contract):
     install_root: Path = Path('C:/Program Files/Computers and Structures/ETABS 18')
     timeout_s: float = Field(default=180., ge=10., le=1200.)
     beam_theory: Literal['timoshenko','euler_comparison'] = 'timoshenko'
-    wall_vertical_subdivisions: int = Field(default=1,ge=1,le=4)
+    wall_vertical_subdivisions: int = Field(default=1,ge=1,le=16)
 
 
 class CantileverSpec(Contract):
@@ -111,11 +111,14 @@ class ConnectionAuditSpec(Contract):
     frame_names: tuple[str, ...] | None = Field(default=None,min_length=1,max_length=1000)
     detailed_axes: bool = False
     read_generated_lines: bool = False
+    area_mesh_only: bool = False
 
     @model_validator(mode='after')
     def edb_only(self) -> ConnectionAuditSpec:
         if not self.model.is_absolute() or self.model.suffix.lower() != '.edb':
             raise ValueError('An absolute EDB path is required')
+        if self.area_mesh_only and (self.frame_names is not None or self.detailed_axes or self.read_generated_lines):
+            raise ValueError('Area-only audit cannot request frame operations')
         return self
 
 
@@ -170,14 +173,44 @@ class JointRotationSpec(Contract):
         return self
 
 
+class InterfaceCase(Contract):
+    name: str = Field(pattern=r'^[a-z][a-z0-9_]{0,39}$')
+    subdivisions: Literal[1,2,4,8,16]
+    rigid: bool
+    face_nodes: bool = True
+    horizontal_subdivisions: Literal[1,2,4] = 1
+    edge_constraints: bool | None = None
+
+    @model_validator(mode='after')
+    def required_faces(self) -> InterfaceCase:
+        if self.rigid and not self.face_nodes:
+            raise ValueError('Rigid connection requires beam-face nodes')
+        return self
+
+
+class InterfaceBatchSpec(Contract):
+    kind: Literal['interface_batch'] = 'interface_batch'
+    residential: ResidentialSpec
+    cases: tuple[InterfaceCase,...] = Field(min_length=1,max_length=4)
+    joint_probes: bool = False
+
+    @model_validator(mode='after')
+    def bounded(self) -> InterfaceBatchSpec:
+        if len({c.name for c in self.cases})!=len(self.cases) or self.residential.project.stories!=12:
+            raise ValueError('Unique interface cases and the authorized 12 stories required')
+        if self.joint_probes:
+            JointRotationSpec(residential=self.residential)
+        return self
+
+
 class ETABSRequest(Contract):
     config: ETABSConfig
-    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec | ModelFormReviewSpec | JointRotationSpec = Field(discriminator='kind')
+    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec | ModelFormReviewSpec | JointRotationSpec | InterfaceBatchSpec = Field(discriminator='kind')
 
     @model_validator(mode='after')
     def theory_scope(self) -> ETABSRequest:
-        if isinstance(self.spec,(ConnectionStudySpec,ModelFormReviewSpec,JointRotationSpec)) and self.config.beam_theory != 'euler_comparison':
+        if isinstance(self.spec,(ConnectionStudySpec,ModelFormReviewSpec,JointRotationSpec,InterfaceBatchSpec)) and self.config.beam_theory != 'euler_comparison':
             raise ValueError('Connection study fixes Euler beams')
-        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec,ConnectionStudySpec,ModelFormReviewSpec,JointRotationSpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
+        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec,ConnectionStudySpec,ModelFormReviewSpec,JointRotationSpec,InterfaceBatchSpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
             raise ValueError('Beam/mesh comparison options are supported only for the residential diagnostic')
         return self

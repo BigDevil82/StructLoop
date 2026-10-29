@@ -9,13 +9,15 @@ from .client import ETABSClient, rows
 from .contracts import ResidentialSpec
 from .joint_mechanics import joint_plan
 from .residential_input import prepare
+from .interface_geometry import aggregation_targets
 
 
 def etabs_joint_results(client: ETABSClient, spec: ResidentialSpec,
-                        nodes: dict[Any,str], mapping: list[dict[str,Any]]) -> dict[str,Any]:
+                        nodes: dict[Any,str], mapping: list[dict[str,Any]], *,
+                        interface: dict[str,Any] | None=None) -> dict[str,Any]:
     plan, data = joint_plan(spec),prepare(spec)
     m, call = client.model,client.call
-    coordinate_keys = {tuple(round(v,6) for v in xyz):key for key,xyz in plan['points'].items()}
+    coordinate_keys = aggregation_targets(plan,interface)
     objects = {key:nodes[round(xyz[2]/spec.project.story_height_m),(xyz[0],xyz[1])]
         for key,xyz in plan['points'].items()}
     beams = {str(item['story']):item['etabs_object'] for item in mapping if item['role']!='wall'}
@@ -64,15 +66,18 @@ def etabs_joint_results(client: ETABSClient, spec: ResidentialSpec,
                 point = r['point']
                 if point not in coordinates:
                     coordinates[point] = call('JointElementPointCoord',m.PointElm.GetCoordCartesian,point)
-                key = coordinate_keys.get(tuple(round(v,6) for v in coordinates[point]))
-                if key is not None:
-                    wall_forces[key] += [r[k] for k in ('f1','f2','f3','m1','m2','m3')]
+                target = coordinate_keys.get(tuple(round(v,6) for v in coordinates[point]))
+                if target is not None:
+                    key,offset = target
+                    value = np.array([r[k] for k in ('f1','f2','f3','m1','m2','m3')])
+                    value[3:] += np.cross(offset,value[:3])
+                    wall_forces[key] += value
         result['cases'][case] = {'displacements':displacements,'beam_forces':forces,
             'wall_forces':{key:value.tolist() for key,value in wall_forces.items()},'raw_wall_forces':raw_walls}
     return result
 
 
-def opensees_joint_case(plan: dict[str,Any], build: Any) -> dict[str,Any]:
+def opensees_joint_case(plan: dict[str,Any], build: Any, *, interface: dict[str,Any] | None=None) -> dict[str,Any]:
     import openseespy.opensees as ops
     coordinates = {tuple(round(v,6) for v in ops.nodeCoord(tag)):tag for tag in ops.getNodeTags()}
     points = {key:coordinates[tuple(round(v,6) for v in xyz)] for key,xyz in plan['points'].items()}
@@ -82,20 +87,26 @@ def opensees_joint_case(plan: dict[str,Any], build: Any) -> dict[str,Any]:
         raise ValueError('Every full-stiffness source beam must remain present')
     beam_forces = {story:np.array(ops.eleForce(tag)).reshape(2,6).tolist() for story,tag in beams.items()}
     wall_forces = {key:np.zeros(6) for key in plan['points']}
-    keys = {tag:key for key,tag in points.items()}
+    targets = aggregation_targets(plan,interface)
     raw_walls = {}
     for tag in set(ops.getEleTags())-set(beams.values()):
         ends = list(ops.eleNodes(tag))
         values = np.array(ops.eleForce(tag)).reshape(len(ends),6)
         raw_walls[str(tag)] = {'nodes':ends,'global_forces':values.tolist()}
         for node,force in zip(ends,values):
-            if node in keys:
-                wall_forces[keys[node]] += force
+            target = targets.get(tuple(round(v,6) for v in ops.nodeCoord(node)))
+            if target is not None:
+                key,offset = target
+                value = force.copy()
+                value[3:] += np.cross(offset,value[:3])
+                wall_forces[key] += value
     return {'displacements':displacements,'beam_forces':beam_forces,
         'wall_forces':{key:value.tolist() for key,value in wall_forces.items()},'raw_wall_forces':raw_walls}
 
 
-def opensees_joint_probes(plan: dict[str,Any], build: Any, bases: list[int]) -> dict[str,Any]:
+def opensees_joint_probes(plan: dict[str,Any], build: Any, bases: list[int], *,
+                          interface: dict[str,Any] | None=None, handler: str='Transformation',constraint_scale: float=1.,
+                          solver: str='UmfPack') -> dict[str,Any]:
     import openseespy.opensees as ops
     coordinates = {tuple(round(v,6) for v in ops.nodeCoord(tag)):tag for tag in ops.getNodeTags()}
     results = {}
@@ -103,9 +114,12 @@ def opensees_joint_probes(plan: dict[str,Any], build: Any, bases: list[int]) -> 
         point = coordinates[tuple(round(v,6) for v in plan['points'][probe['point']])]
         ops.reset()
         ops.wipeAnalysis()
-        ops.constraints('Transformation')
+        if handler=='Lagrange':
+            ops.constraints(handler,constraint_scale,constraint_scale)
+        else:
+            ops.constraints(handler)
         ops.numberer('RCM')
-        ops.system('UmfPack')
+        ops.system(solver,*(['-piv'] if solver=='SparseGeneral' else []))
         ops.timeSeries('Linear',index)
         ops.pattern('Plain',index,index)
         load = np.zeros(6)
@@ -124,7 +138,7 @@ def opensees_joint_probes(plan: dict[str,Any], build: Any, bases: list[int]) -> 
             reaction[3:] += np.cross(ops.nodeCoord(node),f[:3])
         if not np.allclose(reaction,-load,atol=1e-5,rtol=1e-7):
             raise ValueError(f'Joint moment probe base equilibrium failed: {case}, {reaction}')
-        results[case] = opensees_joint_case(plan,build)
+        results[case] = opensees_joint_case(plan,build,interface=interface)
         results[case]['base_reaction_global'] = reaction.tolist()
         ops.remove('loadPattern',index)
     return results

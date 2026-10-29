@@ -9,7 +9,8 @@ from struct_agent.schemas.base import Contract
 
 
 class ReferenceMesh(Contract):
-    vertical_subdivisions: int = Field(default=1,ge=1,le=4)
+    vertical_subdivisions: int = Field(default=1,ge=1,le=16)
+    horizontal_subdivisions: int = Field(default=1,ge=1,le=4)
     fiber_refinement: int = Field(default=1,ge=1,le=4)
     rebuild_walls: bool = False
     wall_formulation: Literal['mvlem', 'shell_dkgq', 'shell_asd'] = 'mvlem'
@@ -21,6 +22,8 @@ class ReferenceMesh(Contract):
 
     @model_validator(mode='after')
     def applicable_options(self) -> ReferenceMesh:
+        if self.horizontal_subdivisions>1 and self.wall_formulation=='mvlem':
+            raise ValueError('Horizontal shell refinement is not MVLEM fibre refinement')
         if self.remove_beam_stiffness and self.beam_bending_released:
             raise ValueError('Beam removal and bending release are separate counterfactuals')
         if not self.beam_bending_released and self.beam_release_scope != 'all':
@@ -31,7 +34,7 @@ class ReferenceMesh(Contract):
         return self
 
 
-def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
+def refine(build: Any, config: Any, mesh: ReferenceMesh, *, interface: dict[str,Any] | None=None) -> dict[str,Any]:
     """Replace wall panels only, preserving floor nodes, beam tags and masses.
 
     New midheight nodes share coordinates between connected walls. There are
@@ -40,7 +43,7 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
     """
     import openseespy.opensees as ops
     from struct_agent._vendor.shearwall_modeling.builders.mvlem_frame import wall_shear_stiffness
-    if mesh==ReferenceMesh():
+    if mesh==ReferenceMesh() and interface is None:
         return {'options':mesh.model_dump(),'wall_elements':len(build.wall_mesh_element_units),
             'beam_elements':len(build.beam_element_units),'node_count':len(ops.getNodeTags())}
     units = build.wall_mesh_element_units
@@ -114,12 +117,15 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
     mapping = []
     for index,(unit,count) in enumerate(zip(units,sections)):
         profile = profiles[unit.story-1]
+        fractions = ([level-(unit.story-1) for level in interface['story_levels'][unit.story-1]]
+            if interface is not None else [step/mesh.vertical_subdivisions for step in range(mesh.vertical_subdivisions+1)])
         h = unit.story_height/mesh.vertical_subdivisions
         shear_tag = 2000000+index
         if mesh.wall_formulation == 'mvlem':
-            ops.uniaxialMaterial('Elastic',shear_tag,wall_shear_stiffness(unit.member.length,unit.thickness,h,float(profile.material.G)))
+            if interface is None:
+                ops.uniaxialMaterial('Elastic',shear_tag,wall_shear_stiffness(unit.member.length,unit.thickness,h,float(profile.material.G)))
         levels = []
-        for step in range(mesh.vertical_subdivisions+1):
+        for fraction in fractions:
             pair = []
             for bottom,top in zip(unit.bottom_nodes,unit.top_nodes[::-1]):
                 # The source top order is [right,left], bottom [left,right].
@@ -127,7 +133,7 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
                 tx,ty,tz = ops.nodeCoord(top)
                 if max(abs(tx-x),abs(ty-y),abs(tz-z0-unit.story_height))>1e-8:
                     raise ValueError('Source panel corner order/geometry is inconsistent')
-                z = z0+step*h
+                z = z0+fraction*unit.story_height
                 key = (round(x,6),round(y,6),round(z,8))
                 if key not in nodes:
                     nodes[key] = next_node
@@ -138,7 +144,7 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
                 raise ValueError('A rectangular source panel must have two corner nodes per level')
             levels.append(pair)
         tags = []
-        for bottom,top in zip(levels,levels[1:]):
+        for piece,(bottom,top) in enumerate(zip(levels,levels[1:])):
             tag = next_element
             next_element += 1
             corners = (bottom[0],bottom[1],top[1],top[0])
@@ -146,19 +152,37 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
                 element = 'ShellDKGQ' if mesh.wall_formulation == 'shell_dkgq' else 'ASDShellQ4'
                 ops.element(element,tag,*corners,3000000+unit.story)
             else:
+                current_shear_tag = shear_tag
+                if interface is not None:
+                    current_shear_tag = 20000000+tag
+                    current_h = unit.story_height*(fractions[piece+1]-fractions[piece])
+                    ops.uniaxialMaterial('Elastic',current_shear_tag,wall_shear_stiffness(
+                        unit.member.length,unit.thickness,current_h,float(profile.material.G)))
                 poisson = [] if mesh.plate_poisson is None else ['-Poisson',mesh.plate_poisson]
                 ops.element('MVLEM_3D',tag,*corners,count,
                     '-thick',*([unit.thickness]*count),'-width',*([unit.member.length/count]*count),'-rho',*([0.01]*count),
                     '-matConcrete',*([1000000+unit.story]*count),'-matSteel',*([1000000+unit.story]*count),
-                    '-matShear',shear_tag,'-CoR',mesh.center_of_rotation,*poisson)
+                    '-matShear',current_shear_tag,'-CoR',mesh.center_of_rotation,*poisson)
             tags.append(tag)
         mapping.append({'story':unit.story,'source_id':unit.wall_id,'original_tag':unit.element_tags[0],
             'new_element_tags':tags,'fibers_per_section':count if mesh.wall_formulation == 'mvlem' else None})
     actual = set(ops.getEleTags())
-    if not beams.issubset(actual) or len(actual)!=len(beams)+len(units)*mesh.vertical_subdivisions:
+    wall_count = sum(len(row['new_element_tags']) for row in mapping)
+    if not beams.issubset(actual) or len(actual)!=len(beams)+wall_count:
         raise ValueError('Refinement lost or duplicated a physical member')
-    return {'options':mesh.model_dump(),'wall_elements':len(units)*mesh.vertical_subdivisions,
+    groups = []
+    if interface is not None:
+        for group in interface['groups']:
+            key = lambda xyz:(round(xyz[0],6),round(xyz[1],6),round(xyz[2],8))
+            master = nodes[key(group['master_xyz_m'])]
+            slaves = [nodes[key(xyz)] for xyz in group['slaves_xyz_m']]
+            for slave in slaves:
+                ops.rigidLink('beam',master,slave)
+            groups.append({'master':master,'slaves':slaves,
+                'offsets_m':[[0.,0.,xyz[2]-group['master_xyz_m'][2]] for xyz in group['slaves_xyz_m']]})
+    return {'options':mesh.model_dump(),'wall_elements':wall_count,
         'beam_elements':len(beams),'node_count':len(ops.getNodeTags()),'wall_mapping':mapping,
         'released_beam_tags':released_beams,
         'removed_beam_tags':removed_beams,'auxiliary_null_dof_nodes':auxiliary_nodes,
+        'interface_groups':groups,
         'added_floor_masses':0,'added_floor_beams':0,'added_diaphragms':0,'member_design_extraction_supported':False}
