@@ -13,7 +13,7 @@ from struct_agent.agents.chat_client import ChatClient, ChatConfig, read_api_key
 from struct_agent.agents.policies import FixedPolicy, RulePolicy, LLMPolicy, DecisionPolicy
 from struct_agent.cli import load_assets
 from struct_agent.io.artifacts import create_run, write_json
-from struct_agent.schemas import LayoutCandidate, ProjectSpec, RoomGraph
+from struct_agent.schemas import DesignCandidate, LayoutCandidate, ProjectSpec, RoomGraph
 from struct_agent.services.analysis import AnalysisService
 from struct_agent.workflows.optimization_env import OptimizationEnvironment
 from struct_agent.workflows.layout_approval import LayoutApproval
@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument("--purpose", choices=("smoke_only", "research"), required=True)
     parser.add_argument("--policy", choices=("fixed", "rules", "llm"), required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--initial-design", type=Path, help="Evaluate this design first, then iterate from real feedback")
     parser.add_argument("--budget-fea", type=int, required=True)
     parser.add_argument("--population", type=int, default=24)
     parser.add_argument("--generations", type=int, default=20)
@@ -47,13 +48,21 @@ def main() -> None:
     layouts = tuple(LayoutCandidate.model_validate_json(p.read_text(encoding="utf-8")) for p in args.layout)
     rooms = RoomGraph.model_validate_json(args.rooms.read_text(encoding="utf-8"))
     spec = ProjectSpec.model_validate_json(args.spec.read_text(encoding="utf-8"))
+    initial = DesignCandidate.model_validate_json(args.initial_design.read_text(encoding="utf-8")) if args.initial_design else None
+    if initial is not None:
+        initial.validate_against(spec)
+        if initial.layout_id != layouts[0].layout_id:
+            raise ValueError("Initial design must belong to the first layout")
     metadata = json.loads(args.assets.read_text(encoding="utf-8")) if args.use_surrogate else {}
     signatures = {metadata[k].get("analysis_signature") for k in assets}
     cfg = CasinoConfig(feasibility_weights=assets.get("feasibility"), steel_weights=assets.get("steel"), seed=args.seed,
                        use_surrogate=args.use_surrogate, surrogate_analysis_signature=next(iter(signatures)) if len(signatures) == 1 else None,
+                       initial_values=initial.values if initial else None,
                        population_size=args.population, generations=args.generations, screening_threshold=args.screening_threshold)
     inputs = {**assets, "rooms": args.rooms, "spec": args.spec,
               **{f"layout_{i}": p for i, p in enumerate(args.layout)}}
+    if args.initial_design:
+        inputs["initial_design"] = args.initial_design
     approvals: dict[str, LayoutApproval] = {}
     for i, path in enumerate(args.layout_approval):
         approval = LayoutApproval.model_validate_json(path.read_text(encoding="utf-8"))

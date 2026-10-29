@@ -15,7 +15,7 @@ pytestmark = pytest.mark.real
     ("symmetry", "residential_001_symmetry_03"),
 ])
 def test_real_diagnostic_replay_evidence(variant: str, layout_run: str) -> None:
-    run = Path("outputs") / f"member_diagnostics_{variant}_04"
+    run = Path("outputs") / f"member_diagnostics_{variant}_05"
     if not (run / "summary.json").is_file():
         pytest.fail(f"BLOCKED: missing real diagnostic artifacts {run}")
     payload = json.loads((run / "analyses/eval_00001.json").read_text(encoding="utf-8"))

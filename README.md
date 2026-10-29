@@ -85,16 +85,18 @@ OpenSees 日志、优化历史和结果。无 Git 时以源码哈希标识代码
 换布局或设计条件必须创建新会话；共享 `AnalysisService` 可继续使用同一全局 FEA 预算。
 
 CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推进并保存每段记录。
-它目前自动推进到停止条件，尚未让 Agent 在段间决策。默认 `--device cpu` 用于可复现回归；
+需要在代际决策时使用后文 `agent_cli`。默认 `--device cpu` 用于可复现回归；
 可显式选择 `--device cuda`，但 GPU 推理不保证逐数值完全一致。
-不传 `--generations-per-step` 时仍保留原一次性 GA 入口，作为对照。
+不传 `--generations-per-step` 时一次执行，同样调用当前共用的生成引擎。
 
 每段写入 `optimization/steps/advance_*.json`，包括种群、历史、随机状态、校准样本、
 评价增量和错误；结束时写入 `history.json`、`summary.json`。当前仅支持**同进程、代际边界**续行，
 这些 JSON 是审计快照，不是可从磁盘加载的恢复点。部分代因预算/求解异常中断后终止，不能重试该会话。
 
-原 GA 每代末尾仍评价下一批种群（包括最后一代），最终代理候选保底复核只在总世代结束时执行一次。
-增量接口保留该顺序，不能把 `advance(1)` 理解为恰好一次 FEA。
+当前一代表示一个完成评价和排序的种群；没有被忽略的尾随种群。
+`advance(1)` 不等于一次 FEA，实际次数由种群、代理与缓存决定。
+可用 `--initial-design` 从已有结构参数开始；按可行性、违反量、材料成本排序，
+并以真实反馈提出离散参数调整。流程与材料估算修正见 [优化迭代说明](docs/optimization_iteration.md)。
 
 对应验证：
 
@@ -131,7 +133,7 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 .venv/Scripts/python.exe -m pytest -q tests/integration/test_real_adapters.py -m real --run-real
 ```
 
-最后一条是本机真实回归：RC-GNN 使用当前 residential_001 图纸；历史 FEA 数值对照仍使用旧工件。
+最后一条是本机真实回归：RC-GNN 使用当前 residential_001 图纸；FEA 对照使用当前计算指纹的独立详细分析工件。
 需要已经生成的参考工件，准备步骤及命令见
 [进度记录](docs/progress.md)。普通测试默认跳过真实权重/求解器测试。
 

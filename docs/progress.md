@@ -508,3 +508,103 @@ Phase 4 的基础工程验收路径已打通：实际反馈后继续优化、获
 以上目录已存在；复跑另取新名称。详细变更、使用方法及权重边界见 `docs/physics_fixes.md`。
 下一最小任务：依据修正后的控制构件完善布局/参数策略，积累当前物理实现的可信样本，验证/更新代理标签兼容性。
 目前尚无可行解，不宣称已完成工程设计或证明 Agent 优于基线。
+
+## 2026-10-29：优化内核与反馈迭代修正
+
+### 范围与实现
+
+按用户本轮授权，围绕“给定结构→调整至可行→降低材料目标”修正现有流程，仍属于Phase 4。
+先完成一个最小可验证任务：修复GA的种群更新/终代评价，统一可行性优先的排序，接通给定初值与参数反馈邻域。
+没有重训或修改RC-GNN/FuseGNN权重，没有改变真实图纸或编造工程条件。
+
+- `_vendor/shearwall_optimization/algorithms/{genetic,evolution}.py`：
+  一个已评价种群算一代，终代参与最优解；小种群保留子代位置；单次与分段共用引擎。
+  删除重复 `adapters/incremental_ga.py`，不保留原先错误的尾随评价分支。
+- `surrogate_candidate.py`、`problems/shearwall_problem.py`、`casino.py`、`casino_session.py`：
+  所有选择均按可行性/违反量/材料成本排序；真实结果优先于未评价代理占位值。
+  连续约束不重复加同项二元惩罚；增加墙梁设计失败比例，保留无数值解释的失败标志。
+- `adapters/design_search.py` 和两CLI：支持 `--initial-design`，验证参数域/布局归属；
+  给定初值先评价，探索参数上界组合，再用真实超限项提出离散邻域候选。
+  可行后提出降档候选；上界或局部邻域失败不是布局无解的证明。
+- `schemas/agent.py`、`workflows/optimization_env.py`：状态保存最优违反量与可行性；
+  停滞判断使用相同排序，事件记录违反量变化。
+- 材料计算：混凝土价格按同一2500 kg/m³换算；梁箍筋计算完整理想矩形周长；
+  墙边缘纵筋与体积配箍按层高计量。此处只修正量纲/几何错误，没有更换规范限值。
+  当前目标仅为既有单价下梁墙的理想化材料成本，缺少锚固搭接、弯钩、节点扣重、楼板配筋等。
+- 同步迁移清单、README、上游契约、`docs/optimization_iteration.md` 和旧物理修正记录的当前指向。
+
+### 测试与失败处理
+
+先跑目标测试再跑全套。初次运行旧预算测试失败，因为它仍假定 `advance(1)` 会评价两批种群；
+根据已确认的新语义改为第二代触发部分种群预算耗尽，并保留“不重启失败会话”的检查。
+新增最后一批真实参与最优选择、小种群多样性、成本不能掩盖约束违反、给定初值与反馈邻域、
+设计失败比例分辨率、价格密度一致性和钢筋几何工程量测试。
+合成离散算例独立验证“得到可行点→降低材料目标→拒绝降档后的不可行点”，不冒充建筑效果。
+
+不再要求修正后的GA/目标函数AST与错误的上游逐字一致，改以行为和解析反例验证；
+未更改的局部校准器、FuseGNN与MVLEM构建器仍保留上游实现对照。
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_search_feedback.py tests/unit/test_incremental_ga.py tests/unit/test_optimization_env.py
+# 28 passed in 2.52s
+.venv/Scripts/python.exe -m pytest -q tests/integration/test_casino_session.py --run-real
+# 6 passed, 1 warning in 15.15s；真实权重+明确合成FEA，只证明会话/预算/隔离
+.venv/Scripts/python.exe -m pytest -q
+# 95 passed, 17 skipped, 1 warning in 7.70s
+.venv/Scripts/python.exe -m pytest -q --run-real
+# 112 passed, 8 warnings in 93.47s；0 failed，0 skipped
+```
+
+17 skipped 是默认需显式启用的本地测试，已在后一条命令全部执行；没有通过跳过失败获取通过。
+8项warning仍为PyG、ezdxf/pyparsing弃用提示。当前分析指纹为
+`e9b700f9321c8805556b77842da8c4c2fd3c1c45f57d0640719846e0686a8976`。
+
+### 真实迭代与工件
+
+默认工程图仍为 `configs/test_case.json` 的 `residential_001`，采用修正后的 `residential_001_rcgnn_02`。
+条件沿用用户批准的28层等冒烟条件；未将图纸确认等同于正式荷载、规范条件确认。
+
+```powershell
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/residential_001_rcgnn_02/layout.json --rooms outputs/residential_001_rcgnn_02/room_graph.json --spec configs/reference_spec.json --initial-design outputs/physics_fix_inputs_01/design_baseline.json --run outputs/feedback_search_agent_01 --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 6 --population 2 --generations 5
+```
+
+实际5代、6次FEA、全部SUCCESS，Agent预算用完后正常结束；所有候选仍不可行。
+无代理筛选、无LLM API调用。求解/事件/种群/随机状态和初值输入均保留在该目录。
+
+| 评价 | 约束违反量 | 梁墙理想材料成本 元 | 墙设计失败数 | 梁设计失败数 |
+|---|---:|---:|---:|---:|
+| 1 给定初值 | 2.065384 | 2325514.14 | 133 | 7 |
+| 2 参数域上界探索 | 1.012978 | 5283727.10 | 6 | 0 |
+| 3 | 0.969482 | 4070733.54 | 56 | 0 |
+| 4 | 1.071525 | 4691420.36 | 15 | 0 |
+| 5 当前排序最佳 | 0.938128 | 4327980.63 | 39 | 0 |
+| 6 | 1.040018 | 4973478.95 | 6 | 0 |
+
+第4/6次反而变差，仍完整保留，第5次作为当前最优；不是每次参数增大都改善。
+初值到最佳违反量下降54.58%；最佳成本相对上界探索点降低18.09%，但高于原始不可行初值，
+不能宣称已实现可行设计的材料节约，更不能据此证明Agent优于其他策略。
+新反馈违反量只用于搜索，未改变任何校核通过标准，也没有忽略配筋失败。
+
+独立诊断及核验：
+
+- `outputs/member_diagnostics_{baseline,symmetry}_05/`：各1次真实FEA，更新材料汇总后的当前参考；
+  力学失败结论与既有 `_04` 相同。测试已切换当前指纹，没有拿旧材料标签作当前参考。
+- `outputs/feedback_search_inputs_01/`：从Agent摘要提取的最佳设计及来源哈希。
+- `outputs/feedback_search_best_diagnostics_01/`：搜索后额外1次独立真实FEA，全部35字段对照通过；
+  该调用单独记账，不计入前述6次搜索预算。墙剪压失败9项、梁35项，墙配筋失败39项、梁0项。
+  控制墙 `shearwalls_2` 首层长0.1 m、厚0.3 m，利用率1.4231；
+  控制次梁 `beams_40` 第4层长0.755 m、截面0.3×0.5 m，利用率1.5057。
+- `outputs/feedback_search_verification_01/`：`verification.json`、全6次 `evaluations.csv`、
+  `independent_parity.json` 与输入哈希。核验自身0次求解。
+
+本轮建筑规模真实FEA总数10：当前双布局诊断2、全套测试独立普通入口对照1、Agent搜索6、
+最佳独立诊断1。小型解析梁与真实权重/合成FEA的软件测试不计作设计搜索效果。
+无失败求解被隐藏；没有追加训练或调用学校API。
+
+### 未解决与下一最小任务
+
+尚无满足全部现有校核的结构，当前终止只代表预算内流程完成。材料估算仍不是完整施工工程量。
+剩余控制集中于极短墙段与短梁，仅调整8个全局参数未能解决；局部邻域穷尽也不能证明布局无解。
+下一小任务应把最佳方案的构件诊断接入受控修复，先核实短墙是否应作为组合墙肢/边缘段建模和校核，
+再形成可验证的局部截面或墙段调整操作；不通过放宽限值、漏检或无依据改分类获得“可行”。
+旧代理权重与当前材料标签仍缺少兼容证据，继续禁用于真实筛选。正式策略对照和论文结论仍待验证。

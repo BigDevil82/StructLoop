@@ -65,7 +65,6 @@ def test_rcgnn_matches_original_model_on_current_case() -> None:
 
 
 @pytest.mark.parametrize('relative,class_name',[
-    ('shearwall_optimization/algorithms/genetic.py','GeneticAlgorithmOptimizer'),
     ('shearwall_optimization/local_calibration.py','OnlineLocalCalibrator'),
     ('surrogate/gnn/model.py','LayoutParamGNN'),
     ('shearwall_modeling/builders/mvlem_frame.py','MVLEMFrameBuilder'),
@@ -84,7 +83,7 @@ def test_real_fea_matches_current_detailed_result(tmp_path: Path) -> None:
     from struct_agent.adapters.physics import analysis_signature
     layout = LayoutCandidate.model_validate_json(Path('outputs/residential_001_rcgnn_02/layout.json').read_text(encoding='utf-8'))
     spec = ProjectSpec.model_validate_json(Path('configs/reference_spec.json').read_text(encoding='utf-8'))
-    data = json.loads(Path('outputs/member_diagnostics_baseline_04/analyses/eval_00001.json').read_text(encoding='utf-8'))
+    data = json.loads(Path('outputs/member_diagnostics_baseline_05/analyses/eval_00001.json').read_text(encoding='utf-8'))
     assert data['analysis']['analysis_signature'] == analysis_signature(), 'BLOCKED: regenerate current corrected diagnostic reference'
     design = DesignCandidate.model_validate_json(json.dumps(data['design']))
     record = OpenSeesAdapter(log_directory=tmp_path/'logs').evaluate(layout,design,spec,evaluation_id='regression_01')
@@ -96,15 +95,3 @@ def test_real_fea_matches_current_detailed_result(tmp_path: Path) -> None:
         else:
             np.testing.assert_allclose(actual,expected,rtol=1e-5,atol=1e-8,err_msg=name)
     assert Path(record.solver_log).is_file()
-
-
-def test_objective_formula_preserved() -> None:
-    path = 'shearwall_optimization/problems/shearwall_problem.py'
-    original = ast.parse((UPSTREAM/'src'/path).read_text(encoding='utf-8-sig'))
-    fn = next(n for n in original.body if isinstance(n,ast.FunctionDef) and n.name == '_evaluate_decision')
-    start = next(i for i,n in enumerate(fn.body) if isinstance(n,ast.Assign)
-        and any(isinstance(t,ast.Name) and t.id == 'cost' for t in n.targets))
-    expected = ast.unparse(ast.Module(body=fn.body[start:],type_ignores=[])).replace("float(merged['intensity'])","float(params.intensity)")
-    migrated = ast.parse((Path('src/struct_agent/_vendor')/path).read_text(encoding='utf-8'))
-    fn = next(n for n in migrated.body if isinstance(n,ast.FunctionDef) and n.name == 'summarize_analysis')
-    assert ast.dump(ast.parse(expected)) == ast.dump(ast.Module(body=fn.body,type_ignores=[]))

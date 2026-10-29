@@ -1,4 +1,4 @@
-"""Minimal fixed-layout CASINO GA entry point, retaining the upstream algorithm."""
+"""Fixed-layout search with feasibility-first selection and real FEA feedback."""
 from __future__ import annotations
 
 import hashlib
@@ -27,6 +27,7 @@ class CasinoConfig(Contract):
     use_surrogate: bool = False
     surrogate_analysis_signature: str | None = None
     seed: int
+    initial_values: dict[str, float | str] | None = None
     device: Literal["cpu", "cuda"] = "cpu"
     population_size: int = Field(default=24, ge=2)
     generations: int = Field(default=20, ge=1)
@@ -39,7 +40,7 @@ class CasinoConfig(Contract):
 class CasinoProblem(OptimizationProblem):
     """Native optimizer sees integer mm; all real analysis goes through service."""
     def __init__(self, layout: LayoutCandidate, spec: ProjectSpec, evaluator: AnalysisService,
-                 *, layout_path: Path, seed: int) -> None:
+                 *, layout_path: Path, seed: int, initial_values: dict[str, float | str] | None = None) -> None:
         self.layout, self.spec, self.evaluator, self.layout_path = layout, spec, evaluator, layout_path
         self.rng = random.Random(seed)
         self.objective_cfg = ShearWallObjectiveConfig()
@@ -49,6 +50,27 @@ class CasinoProblem(OptimizationProblem):
         self._variables = [VariableSpec(v.name, [round(float(x)*1000) if v.unit == "m" else x for x in v.values])
                            for v in spec.design_variables]
         self.results: list[tuple[DesignCandidate, EvaluationResult]] = []
+        self.initial_values = initial_values
+        if initial_values is not None:
+            DesignCandidate(design_id="initial", layout_id=layout.layout_id,
+                condition_id=spec.condition_id, values=initial_values).validate_against(spec)
+
+    def initial_candidates(self) -> list[dict[str, Any]]:
+        """Preserve the supplied design before exploring an upper-domain corner."""
+        seeds = []
+        if self.initial_values is not None:
+            seeds.append({k: round(float(v)*1000) if k != "conc_bot" else v
+                          for k, v in self.initial_values.items()})
+            from .design_search import ordered_domain
+            # This is an exploratory corner, never a claimed feasibility bound.
+            seeds.append(self.repair({v.name: ordered_domain(v)[-1] for v in self.variables}))
+        return seeds
+
+    def feedback_candidates(self, x: dict[str, Any], result: EvaluationResult) -> list[dict[str, Any]]:
+        from .design_search import feedback_candidates
+        evaluated = [{k: round(float(v)*1000) if k != "conc_bot" else v for k, v in d.values.items()}
+                     for d, _ in self.results]
+        return feedback_candidates(x, result, self.variables, self.repair, evaluated)
 
     @property
     def variables(self) -> list[VariableSpec]:
@@ -83,7 +105,9 @@ class CasinoProblem(OptimizationProblem):
         from struct_agent._vendor.shearwall_modeling.parametric.types import ParametricAnalysisResult
         result = summarize_analysis(analysis_result=ParametricAnalysisResult(**record.raw),
             params=native_params(design, self.spec), geom_scale=1., objective_cfg=self.objective_cfg,
-            constraint_cfg=self.constraint_cfg, limit_cfg=self.limit_cfg)
+            constraint_cfg=self.constraint_cfg, limit_cfg=self.limit_cfg,
+            member_counts={"wall": self.spec.stories * sum(m.role == "wall" for m in self.layout.members),
+                           "beam": self.spec.stories * sum(m.role != "wall" for m in self.layout.members)})
         if not any(d.design_id == design.design_id for d,_ in self.results):
             self.results.append((design,result))
         return result
@@ -117,9 +141,9 @@ def create_optimizer(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpe
     directory.mkdir(parents=True, exist_ok=False)
     context = directory / "context"
     layout_path = prepare_context(layout, rooms, context)
-    problem = CasinoProblem(layout,spec,evaluator,layout_path=layout_path,seed=cfg.seed)
+    problem = CasinoProblem(layout,spec,evaluator,layout_path=layout_path,seed=cfg.seed,initial_values=cfg.initial_values)
     settings = GeneticAlgorithmConfig(population_size=cfg.population_size, generations=cfg.generations,
-        elite_size=min(2,cfg.population_size), max_workers=None, seed=cfg.seed,
+        elite_size=min(2,cfg.population_size-1), max_workers=None, seed=cfg.seed,
         surrogate_screening=SurrogateScreeningConfig(enabled=cfg.use_surrogate, artifact_path=str(cfg.feasibility_weights),
             graph_cache_dir=str(context), layout_features_path=str(context/"layout_features.parquet"),
             screening_threshold=cfg.screening_threshold),
@@ -143,7 +167,7 @@ def create_optimizer(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpe
 
 def optimize(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpec, evaluator: AnalysisService,
              cfg: CasinoConfig, *, directory: Path) -> dict[str, Any]:
-    """Original one-shot path retained as a numeric regression reference."""
+    """One-shot execution of the same generation engine used by CasinoSession."""
     optimizer = create_optimizer(layout, rooms, spec, evaluator, cfg, directory=directory)
     problem = optimizer.problem
     reason, history = "completed", []
@@ -155,7 +179,7 @@ def optimize(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpec, evalu
     except AnalysisFailed:
         reason = "analysis_failed"
     # Only actual completed evaluations can supply a reported optimum.
-    best = min(problem.results, key=lambda r:(not r[1].feasible,r[1].objective), default=None)
+    best = min(problem.results, key=lambda r:optimizer._rank_key(r[1]), default=None)
     summary = {"termination":reason, "fea_attempts":len(evaluator.records),
         "best_design":None if best is None else best[0].model_dump(),
         "best_feasible":None if best is None else best[1].feasible,

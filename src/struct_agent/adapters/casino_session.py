@@ -12,7 +12,7 @@ from struct_agent.io.artifacts import sha256, write_json
 from struct_agent.schemas import ErrorRecord, LayoutCandidate, ProjectSpec, RoomGraph
 from struct_agent.services.analysis import AnalysisFailed, AnalysisService, BudgetExhausted
 from .casino import CasinoConfig, create_optimizer
-from .incremental_ga import IncrementalGA
+from struct_agent._vendor.shearwall_optimization.algorithms.evolution import IncrementalGA
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ class CasinoSession:
 
     def summary(self) -> dict[str, Any]:
         """Diagnostics only: do not trigger extra model fitting at pause boundaries."""
-        best = min(self.optimizer.problem.results, key=lambda row: (not row[1].feasible, row[1].objective), default=None)
+        best = min(self.optimizer.problem.results, key=lambda row: self.optimizer._rank_key(row[1]), default=None)
         local = self.optimizer.evaluator.local_calibrator
         return {**self.binding, "termination": self.status,
             "completed_generations": self.engine.completed_generations,

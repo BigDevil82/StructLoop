@@ -7,7 +7,8 @@
     "Only MVLEM builder retained",
     "FEA exceptions re-raised for typed Adapter error records",
     "Objective summarization separated from FEA execution; formula unchanged",
-    "Corrected signed combinations, absolute envelopes, local section forces, CQC frequency ratios, all-wall design and topology slivers; no legacy solver branch"
+    "Corrected signed combinations, absolute envelopes, local section forces, CQC frequency ratios, all-wall design and topology slivers; no legacy solver branch",
+    "Corrected GA population accounting/elite allocation, feasibility-first ranking and feedback search; corrected idealized reinforcement takeoff and concrete density/price conversion"
   ],
   "files": [
     {
@@ -33,13 +34,15 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\algorithms\\genetic.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_optimization\\algorithms\\genetic.py",
       "source_sha256": "8aa1a9f8ff84578d8e331afb500ae2d2d6acf5a98110c27673da3abde35bf7eb",
-      "destination_sha256": "97a1430abe7e22e93f66937237106ffd7392ff37172be6150f04f7fa4580a133"
+      "destination_sha256": "4d6d040263916a2b1d5a8060ff0520f0c9aefd42dfc1beef1721480099f169ec",
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\problems\\shearwall_problem.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_optimization\\problems\\shearwall_problem.py",
       "source_sha256": "7f356705b7b301424f57480bfeee2bf3fb012d69ede2fa41f8168b720312ee89",
-      "destination_sha256": "1d256eab381b74bf3223e9c67470dc731a79503b2c6e1b380288537eaa9ef777"
+      "destination_sha256": "2987e8aebb507111e29d8d0d9438e6c1fa01f91876178e549be8dcc9ed71e546",
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\surrogate\\gnn\\model.py",
@@ -129,7 +132,8 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\surrogate_candidate.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_optimization\\surrogate_candidate.py",
       "source_sha256": "33c7173d55faceaaf5a0fd288a4b4c0c6f0d8d22f565de9fc959ba5541d179c7",
-      "destination_sha256": "f2959603decbe123a9dc8d4a8a7abcca6cd03e3f1fa91297de7dc1b00e9d830d"
+      "destination_sha256": "3bc43ff998c982f19a20e50fd0b741ff5ac347786cadb6b15cba8fc5363925ae",
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\surrogate_cost.py",
@@ -153,7 +157,8 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\cost_estimation.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_optimization\\cost_estimation.py",
       "source_sha256": "b0c6d72702e30c5b6ad0a446961bef67d2499dd3707feacecc9d6c1366889182",
-      "destination_sha256": "b11dd43d2210d708f63316ecb46f309d435cf9ace076c17b691a4aa9740ec7a3"
+      "destination_sha256": "0bda1e685e695f51725783758617d8b7a23c7736e9bb9392da3b9f0ead40a282",
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\surrogate\\features\\consts.py",
@@ -259,7 +264,8 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\design\\beam.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\design\\beam.py",
       "source_sha256": "09f2bc608b958803b11489676540b06ecbcb0d28d12402d1646aac737a19689b",
-      "destination_sha256": "436442ce229397b741a9d8cd980b00e59f34f8d5246906f0fd9184c1402cb616"
+      "destination_sha256": "49a72e05247712737f8f5b6161462af46b2b8da0e73c292855a9633d666e11e2",
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\design\\extractor.py",
@@ -277,7 +283,8 @@
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\design\\wall.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\design\\wall.py",
       "source_sha256": "4ff3f19b5af0bf57e3607de7084701ed52929b4cefeda750dc9ccc75fc3fdbde",
-      "destination_sha256": "badc3ea45830148670c18e591c9688b24b45143587d71c105eb11f9c97152165"
+      "destination_sha256": "d0aebd03c9784beea623c6de5120cd8f4fa044d2fa95967ff9e6a88e7683ffeb",
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\analysis\\member_forces.py",

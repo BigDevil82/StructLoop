@@ -47,8 +47,16 @@ class SurrogateCandidateEvaluator:
         return self.local_calibrator.summary()
 
     @staticmethod
-    def rank_key(res: EvaluationResult) -> tuple[bool, float]:
-        return (not res.feasible, float(res.objective))
+    def rank_key(res: EvaluationResult) -> tuple[bool, float, float]:
+        """Feasibility first, then verified violation, then material objective.
+
+        Unevaluated surrogate rejects/skips cannot outrank a measured candidate.
+        """
+        cost = float(res.objectives.get('material_cost', res.objective))
+        violation = float(res.objectives.get('violation_score', res.objective))
+        if SurrogateCandidateEvaluator.is_synthetic_result(res):
+            violation = float('inf')
+        return (not res.feasible, 0.0 if res.feasible else violation, cost)
 
     @staticmethod
     def is_synthetic_result(res: EvaluationResult) -> bool:

@@ -43,4 +43,6 @@ def _price_per_kg(grade: str) -> float:
     key = grade.strip().upper()
     if not key.startswith('C'):
         key = f'C{key}'
-    return CONCRETE_PRICE_PER_M3.get(key, CONCRETE_PRICE_PER_M3['C30']) / 2400.0
+    if key not in CONCRETE_PRICE_PER_M3:
+        raise ValueError(f'Unsupported concrete price grade: {grade}')
+    return CONCRETE_PRICE_PER_M3[key] / ReinforcementDesignConstants().concrete_density_kg_m3

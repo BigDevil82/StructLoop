@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from struct_agent.io.artifacts import create_run, sha256, write_json
-from struct_agent.schemas import LayoutCandidate, ProjectSpec, RoomGraph
+from struct_agent.schemas import DesignCandidate, LayoutCandidate, ProjectSpec, RoomGraph
 
 
 def load_assets(path: Path, *, names: tuple[str, ...]) -> dict[str, Path]:
@@ -40,6 +40,7 @@ def main() -> None:
     optimization.add_argument("--budget-fea", type=int, required=True)
     optimization.add_argument("--population", type=int, default=24)
     optimization.add_argument("--generations", type=int, default=20)
+    optimization.add_argument("--initial-design", type=Path, help="Known design to evaluate before search")
     optimization.add_argument("--generations-per-step", type=int,
                               help="Use an in-process CASINO session, pausing after each generation chunk")
     optimization.add_argument("--device", choices=("cpu", "cuda"), default="cpu",
@@ -104,14 +105,21 @@ def main() -> None:
         spec = ProjectSpec.model_validate_json(args.spec.read_text(encoding="utf-8"))
         rooms = RoomGraph.model_validate_json(args.rooms.read_text(encoding="utf-8"))
         layout = LayoutCandidate.model_validate_json(args.layout.read_text(encoding="utf-8"))
+        initial = DesignCandidate.model_validate_json(args.initial_design.read_text(encoding="utf-8")) if args.initial_design else None
+        if initial:
+            initial.validate_against(spec)
+            if initial.layout_id != layout.layout_id:
+                raise ValueError("Initial design/layout mismatch")
         metadata = json.loads(args.assets.read_text(encoding="utf-8")) if args.use_surrogate else {}
         signatures = {metadata[k].get("analysis_signature") for k in assets}
         cfg = CasinoConfig(feasibility_weights=assets.get("feasibility"), steel_weights=assets.get("steel"),
             use_surrogate=args.use_surrogate, surrogate_analysis_signature=next(iter(signatures)) if len(signatures) == 1 else None,
-            seed=args.seed,population_size=args.population,generations=args.generations,
+            seed=args.seed,initial_values=initial.values if initial else None,population_size=args.population,generations=args.generations,
             screening_threshold=args.screening_threshold,device=args.device)
         inputs = {"spec":args.spec,"rooms":args.rooms,"layout":args.layout,
                   **assets}
+        if args.initial_design:
+            inputs["initial_design"] = args.initial_design
         create_run(args.run,seed=args.seed,inputs=inputs,config={**cfg.model_dump(mode="json"),"budget":args.budget_fea,
             "generations_per_step": args.generations_per_step})
         evaluator = AnalysisService(OpenSeesAdapter(log_directory=args.run/"solver_logs"),

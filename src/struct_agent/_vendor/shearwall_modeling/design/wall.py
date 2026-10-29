@@ -25,7 +25,14 @@ class WallReinforcementDesigner:
         concrete_kg = demand.thickness_m * demand.length_m * demand.story_height_m * self.constants.concrete_density_kg_m3
         vertical_kg = vertical_area * demand.length_m * demand.story_height_m * self.constants.steel_density_kg_m3 * 1e-06
         horizontal_kg = horizontal_area * demand.length_m * demand.story_height_m * self.constants.steel_density_kg_m3 * 1e-06
-        boundary_kg = (boundary_longitudinal * hc_mm / 1000.0 + boundary_stirrup_area * (hc_mm / max(boundary_spacing, 1.0)) * bc_mm / 1000.0) * 2.0 * self.constants.steel_density_kg_m3 * 1e-06
+        # Both boundary zones extend vertically through the story. hc is their
+        # plan length, never the longitudinal bar length. Use the same transverse
+        # volumetric ratio as the existing boundary design, without inventing a
+        # hoop layout from its equivalent area field.
+        volume_ratio = 0.006 if boundary_type == 'constrained' else 0.004
+        boundary_volume_m3 = 2.0 * demand.story_height_m * (
+            boundary_longitudinal * 1e-6 + volume_ratio * bc_mm * hc_mm * 1e-6)
+        boundary_kg = boundary_volume_m3 * self.constants.steel_density_kg_m3
         return WallReinforcementResult(wall_id=demand.wall_id, story=demand.story, vertical_distributed_steel_mm2_per_m=vertical_area, horizontal_distributed_steel_mm2_per_m=horizontal_area, boundary_longitudinal_steel_mm2=boundary_longitudinal, boundary_stirrup_area_mm2=boundary_stirrup_area, boundary_stirrup_spacing_mm=boundary_spacing, boundary_type=boundary_type, material_usage=MaterialUsage(concrete_kg=concrete_kg, steel_kg=vertical_kg + horizontal_kg + boundary_kg), is_over_reinforced=False, is_section_insufficient=sec_insufficient, messages=messages)
 
     def _design_horizontal_distributed_steel(self, demand: WallDesignDemand, wall_thickness_mm: float, effective_length_mm: float, ft_mpa: float) -> float:

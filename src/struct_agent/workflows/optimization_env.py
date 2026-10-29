@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from struct_agent.adapters.casino_session import CasinoSession
+from struct_agent._vendor.shearwall_optimization.surrogate_candidate import SurrogateCandidateEvaluator
 from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import ErrorRecord, LayoutCandidate
 from struct_agent.schemas.agent import OptimizationState, validate_decision
@@ -48,7 +49,7 @@ class OptimizationEnvironment:
         session = self.sessions.get(self.layout_id)
         summary = session.summary() if session else {}
         rows = session.optimizer.problem.results if session else []
-        best = min(rows, key=lambda row: (not row[1].feasible, row[1].objective), default=None)
+        best = min(rows, key=lambda row: SurrogateCandidateEvaluator.rank_key(row[1]), default=None)
         feasible = [r.objectives["material_cost"] for s in self.sessions.values()
                     for _, r in s.optimizer.problem.results if r.feasible]
         records = [r for r in self.evaluator.records if r.layout_id == self.layout_id]
@@ -78,6 +79,8 @@ class OptimizationEnvironment:
             completed_generations=summary.get("completed_generations", 0),
             best_feasible_cost=float(min(feasible)) if feasible else None,
             current_best_objective=float(best[1].objective) if best else None,
+            current_best_violation=float(best[1].objectives.get("violation_score", best[1].objective)) if best else None,
+            current_best_feasible=best[1].feasible if best else None,
             normalized_violations={k: float(v) for k, v in best[1].metrics.get("normalized_violations", {}).items()} if best else {},
             stagnation_steps=self.stagnation, calibration_samples=summary.get("local_calibration_samples", 0),
             available_layouts=available, allowed_actions=tuple(allowed), evidence_refs=tuple(refs),
@@ -100,9 +103,13 @@ class OptimizationEnvironment:
                         traceback=traceback.format_exc(), context={"layout_id": self.layout_id,
                         "phase": "session_creation_or_advance"}, attempt=1)
                     write_json(self.directory / "execution_error.json", self.execution_error.model_dump())
-            current = self.observe().current_best_objective
-            previous = before.current_best_objective
-            improved = current is not None and (previous is None or current < previous - max(1., abs(previous)) * 1e-6)
+            after = self.observe()
+            def progress(state: OptimizationState) -> tuple[bool, float, float]:
+                return (not state.current_best_feasible,
+                    0.0 if state.current_best_feasible else float(state.current_best_violation or 0.),
+                    float(state.current_best_objective or 0.))
+            improved = after.current_best_objective is not None and (
+                before.current_best_objective is None or progress(after) < progress(before))
             self.stagnation = 0 if improved else self.stagnation + 1
         elif decision.action == "SWITCH_LAYOUT":
             self.pending, self.status = decision.target_layout_id, "WAITING_APPROVAL"
@@ -116,7 +123,9 @@ class OptimizationEnvironment:
             "status": self.status, "approval_required": decision.action == "SWITCH_LAYOUT",
             "fea_attempts_delta": after.fea_calls_used - before.fea_calls_used,
             "objective_delta": None if before.current_best_objective is None or after.current_best_objective is None
-                else before.current_best_objective - after.current_best_objective})
+                else before.current_best_objective - after.current_best_objective,
+            "violation_delta": None if before.current_best_violation is None or after.current_best_violation is None
+                else before.current_best_violation - after.current_best_violation})
         return after
 
     def approve_layout(self, layout_id: str, *, reviewer: str, expected_sha256: str) -> None:

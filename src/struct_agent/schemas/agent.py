@@ -20,6 +20,8 @@ class OptimizationState(Contract):
     completed_generations: int = Field(ge=0)
     best_feasible_cost: float | None = Field(default=None, ge=0.)
     current_best_objective: float | None = None
+    current_best_violation: float | None = Field(default=None, ge=0.)
+    current_best_feasible: bool | None = None
     normalized_violations: dict[str, float] = Field(default_factory=dict)
     stagnation_steps: int = Field(ge=0)
     calibration_samples: int = Field(ge=0)

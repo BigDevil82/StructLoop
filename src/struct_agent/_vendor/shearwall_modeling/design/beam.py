@@ -23,10 +23,13 @@ class BeamReinforcementDesigner:
         stirrup_ratio, stirrup_spacing, shear_insufficient, shear_msgs = self._design_shear_steel(demand.shear_n, b_mm, h0_mm, fc_mpa, ft_mpa)
         concrete_kg = demand.width_m * demand.depth_m * demand.length_m * self.constants.concrete_density_kg_m3
         longitudinal_kg = (top_area + bottom_area) * 1e-06 * length_m * self.constants.steel_density_kg_m3
-        stirrup_height_m = max(h_mm - 2.0 * self.constants.cover_to_centroid_mm, 0.0) / 1000.0
-        stirrup_area_mm2 = self.constants.beam_stirrup_bar_area_mm2 * self.constants.beam_stirrup_legs
+        # A closed rectangular hoop has two width and two depth segments. The
+        # legs used for shear capacity are not a substitute for its full length.
+        stirrup_perimeter_m = 2.0 * (max(b_mm - 2.0 * self.constants.cover_to_centroid_mm, 0.0)
+            + max(h_mm - 2.0 * self.constants.cover_to_centroid_mm, 0.0)) / 1000.0
+        stirrup_area_mm2 = self.constants.beam_stirrup_bar_area_mm2
         stirrup_count = length_m * 1000.0 / max(stirrup_spacing, 1.0)
-        stirrup_kg = stirrup_area_mm2 * 1e-06 * stirrup_height_m * stirrup_count * self.constants.steel_density_kg_m3
+        stirrup_kg = stirrup_area_mm2 * 1e-06 * stirrup_perimeter_m * stirrup_count * self.constants.steel_density_kg_m3
         return BeamReinforcementResult(beam_id=demand.beam_id, story=demand.story, top_steel_area_mm2=top_area, bottom_steel_area_mm2=bottom_area, stirrup_area_per_spacing_mm2_per_mm=stirrup_ratio, stirrup_spacing_mm=stirrup_spacing, material_usage=MaterialUsage(concrete_kg=concrete_kg, steel_kg=longitudinal_kg + stirrup_kg), is_over_reinforced=top_over or bottom_over, is_section_insufficient=shear_insufficient, messages=top_msgs + bottom_msgs + shear_msgs)
 
     def _design_flexural_steel(self, moment_n_m: float, width_mm: float, effective_depth_mm: float, fc_mpa: float) -> tuple[float, bool, list[str]]:
