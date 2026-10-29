@@ -698,3 +698,43 @@ YJK自带Python 3.10.11执行 `import YJKAPI` 返回 `YJK_API_IMPORT_OK`、exit=
 再验证前处理与真实求解/配筋返回，形成对本地简化检查的工程参照。
 仍未实现YJK的MPC/短墙归并、完整组合墙/柱式配筋和小跨高比梁壳模型，不继续将本地检查包装成成熟软件等价结果。
 旧CASINO标签/权重不得跨新设计单位、几何或求解后端未经验证使用；真实工程条件和最终签审边界保持明确。
+
+## 2026-10-29：YJK API能力核查、几何持久化与交叉验证计划
+
+用户确认有可用加密狗、盈建科可正常使用。本轮仍属Phase 4的接口核查；未改分析/优化算法或模型权重。
+已核实本机DataFunc建模/YDB写入、YJKSControl/UI命令控制、YJKSDsnDataPy结果查询的公开接口声明。
+结果查询覆盖质量、周期、位移、墙柱标准内力与配筋等，但未将接口存在冒充真实读取通过。
+
+实际在隔离目录做了当前住宅平面的一层几何探测：
+
+- `_01`：内存201节点/243网格，CreateYDB返回true但落盘空库。只读核验发现问题；未隐藏失败。
+  两次ReadYdb调用导致原生进程退出1，没有Python异常，不能当作读取成功。
+- `_02`：检查出DataFunc需要DbModel_Assign提交；提交后DbModel含201节点/243网格，而PreModel为空。
+  以PreModel尝试ReflectAndCreateYDB返回false，没有模型文件，保留结果。
+- `_03`：提交后SetDbmodel(GetDbModelData())并CreateYDB，实际生成有数据的 `project/dtlmodel.ydb`。
+  只读SQLite核对完整性、全部坐标、243条网格的连接关系和2900 mm层高均通过；记录哈希与平面原点。
+  有效文件/目录两种ReadYdb参数仍引发原生退出1；原因未定，后续需核对SDK初始化/调用上下文。
+
+工件分别为 `outputs/yjk_api_roundtrip_{01,02,03}/`，保留脚本、内存计数、返回值及失败记录。
+最终核验是 `_03/database_verification.json`，读回失败为 `_03/readback_failures.json`。
+这只证明几何骨架可持久化：梁/墙/板对象0，标准层1、楼层1；不是28层住宅工程模型，更没有商业求解结果。
+本轮商业求解=0、额外OpenSees求解=0、学校API调用=0；没有更改用户现有工程或关闭其软件实例。
+
+具体探测命令（工作目录为对应全新运行目录，已有目录不要复跑覆盖）：
+
+```powershell
+& 'D:/Softwares/YJKS_8_0_0/python310/python.exe' -u probe_worker.py
+& 'D:/Softwares/YJKS_8_0_0/python310/python.exe' -u readback_worker.py
+& 'D:/Softwares/YJKS_8_0_0/python310/python.exe' -u readback_dir_worker.py
+```
+
+更新 `configs/solver_inventory.json`：授权状态为USER_CONFIRMED_USABLE；几何导出局部验证通过，
+完整模型导出、商业计算与分析结果读取未验证，模型API读回原生退出问题明确保留。
+新增 `docs/yjk_cross_validation.md`，确定分层对照：实际模型/假定→基础力学/平衡→动力与构件响应→配筋/材料。
+必须核对YJK前处理后的实际模型与截面，区分标准/调整/组合内力，先比所需配筋再比实配工程量；不预设统一误差百分比。
+计划通过固定白名单Adapter和外部SDK进程接入Agent，保持主项目Python环境，捕获原生进程退出、超时及旧结果误读。
+
+本轮只提交文档、能力清单与来源/哈希，无新增业务代码；实际几何文件是对应验证工件，不能算完整API调用链验收。
+仓库回归 `.venv/Scripts/python.exe -m pytest -q`：106 passed、17 skipped、1 warning，9.54s。
+17项为默认关闭的本地真实测试；本轮没有改计算代码，不重复执行建筑FEA，YJK探针单独按上述真实工件核验。
+下一最小任务：解决模型读回上下文，补齐当前住宅的梁墙板截面、楼层和明确计算参数，再验证一轮前处理/求解/结果读取。

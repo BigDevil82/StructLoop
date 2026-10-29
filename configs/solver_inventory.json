@@ -6,8 +6,8 @@
     "vendor_python": "D:\\Softwares\\YJKS_8_0_0\\python310\\python.exe",
     "vendor_python_version": "3.10.11",
     "api_import": "VERIFIED",
-    "model_export": "NOT_VALIDATED",
-    "license": "NOT_VALIDATED",
+    "model_export": "PARTIAL_GEOMETRY_ONLY_VERIFIED",
+    "license": "USER_CONFIRMED_USABLE",
     "analysis": "NOT_VALIDATED",
     "result_import": "NOT_VALIDATED",
     "references": {
@@ -26,7 +26,25 @@
       "ipc_api_stub": {
         "path": "D:\\Softwares\\YJKS_8_0_0\\python310\\site-packages\\YJKAPI\\_YJKIPC\\__init__.pyi",
         "sha256": "c99414aebbaa1fab863c29f5205ed8d238174d2852c341b016788da9279784ae"
+      },
+      "analysis_result_api_stub": {
+        "path": "D:\\Softwares\\YJKS_8_0_0\\python310\\site-packages\\YJKAPI\\_MiddleTrans\\__init__.pyi",
+        "sha256": "6f13e39906cba50f219893baf4b539d68f46bfb6f86f069e3e9faad839d3cdcf"
       }
+    },
+    "license_evidence": "User confirmed hardware dongle and normal GUI use, 2026-10-29; not a solver invocation result.",
+    "model_api_readback": "NATIVE_PROCESS_EXIT_UNRESOLVED",
+    "geometry_export_evidence": {
+      "run": "outputs/yjk_api_roundtrip_03",
+      "source_case": "residential_001",
+      "joints": 201,
+      "grids": 243,
+      "standard_floors": 1,
+      "floors": 1,
+      "walls": 0,
+      "beams": 0,
+      "slabs": 0,
+      "database_sha256": "039ae5e39a0432d8c84f3413404c6deac2406058c66967222371c20673ea1eb8"
     }
   }
 }
