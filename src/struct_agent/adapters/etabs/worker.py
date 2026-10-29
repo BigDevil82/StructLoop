@@ -9,7 +9,7 @@ from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import ErrorRecord
 from .benchmark import build_and_analyze
 from .client import session
-from .contracts import ETABSRequest, CantileverSpec, SingleWallSpec, StructuralBatchSpec, ConnectionAuditSpec
+from .contracts import ETABSRequest, CantileverSpec, SingleWallSpec, StructuralBatchSpec, ConnectionAuditSpec, ConnectionStudySpec
 
 
 def main() -> int:
@@ -32,6 +32,9 @@ def main() -> int:
             elif isinstance(spec, ConnectionAuditSpec):
                 from .connection_audit import inspect_connections
                 result = inspect_connections(client, spec, directory)
+            elif isinstance(spec, ConnectionStudySpec):
+                from .connection_study import build_study
+                result = build_study(client, spec, directory, config)
             else:
                 from .residential import build_and_analyze as residential
                 result = residential(client,spec,directory,beam_theory=config.beam_theory,

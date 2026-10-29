@@ -34,3 +34,26 @@ def test_diagnostic_shell_substitution_preserves_mass_geometry_and_solves(
     assert mapping['wall_elements'] == 48 and mapping['beam_elements'] == 0
     assert mapping['added_floor_masses'] == mapping['added_diaphragms'] == 0
     assert all(row['fibers_per_section'] is None for row in mapping['wall_mapping'])
+
+
+@pytest.mark.real
+@pytest.mark.parametrize('formulation',['mvlem','shell_dkgq'])
+def test_bending_release_preserves_prescribed_mass_and_has_zero_beam_moments(
+        tmp_path: Path, spec: ProjectSpec, design: DesignCandidate, layout: LayoutCandidate,
+        formulation: str) -> None:
+    # Two L walls coupled by one beam, matching the real diagnostic topology.
+    from struct_agent.schemas import Member
+    members = tuple(Member(member_id=f'm{i}',start=a,end=b,role=role) for i,(a,b,role) in enumerate((
+        ((0.,0.),(1.,0.),'wall'),((0.,0.),(0.,3.),'wall'),
+        ((3.,0.),(4.,0.),'wall'),((4.,0.),(4.,3.),'wall'),((1.,0.),(3.,0.),'primary'),
+        ((1.,0.),(1.,-1.),'secondary'))))
+    request = ResidentialSpec(project=spec.model_copy(update={'stories':12}),
+        layout=layout.model_copy(update={'members':members}),design=design)
+    result = run_reference(request,tmp_path/'released',mesh=ReferenceMesh(
+        wall_formulation=formulation,beam_bending_released=True,beam_release_scope='wall_to_wall'))
+    assert result['verified']
+    assert all(row['released_beam_bending_zero'] for row in result['checks'].values())
+    assert all(result['static'][case]['max_released_end_moment_nm'] < 1e-6 for case in ('ROOF_X','ROOF_Y'))
+    import json
+    info = json.loads((tmp_path/'released'/'mesh.json').read_text(encoding='utf-8'))
+    assert info['beam_elements'] == 24 and len(info['released_beam_tags']) == 12

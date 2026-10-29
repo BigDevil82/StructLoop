@@ -24,12 +24,16 @@ def beam_modifiers(theory: Literal['timoshenko','euler_comparison']) -> list[flo
 
 def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Path, *,
                       beam_theory: Literal['timoshenko','euler_comparison']='timoshenko',
-                      wall_vertical_subdivisions: int=1) -> dict[str,Any]:
+                      wall_vertical_subdivisions: int=1,
+                      connection_mode: Literal['default','zero_offsets','pinned_bending'] | None=None,
+                      release_scope: Literal['all','wall_to_wall']='all') -> dict[str,Any]:
     from struct_agent.adapters.fea import native_topology
     from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers
     data = prepare(spec)
     if not 1<=wall_vertical_subdivisions<=4:
         raise ValueError('Bounded wall subdivision count required')
+    if connection_mode not in (None,'default','zero_offsets','pinned_bending'):
+        raise ValueError('Unknown diagnostic beam connection mode')
     m, call, v = client.model, client.call, spec.design.values
     call('InitializeNewModel',m.InitializeNewModel,10)
     call('NewBlank',m.File.NewBlank)
@@ -58,6 +62,10 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     for label in sorted(set(source_to_pier.values())-existing):
         call('DefinePier',m.PierLabel.SetPier,label)
     wall_points = {p for member in data.layout.members if member.role=='wall' for p in (member.start,member.end)}
+    if connection_mode == 'pinned_bending' and release_scope == 'all' and any(
+            member.start not in wall_points or member.end not in wall_points
+            for member in data.layout.members if member.role != 'wall'):
+        raise ValueError('All-end releases leave unsupported vertical joints')
     nodes = {}
     for level in range(n+1):
         for point in sorted(wall_points if level==0 else set(data.points)):
@@ -71,7 +79,7 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
             for point in sorted(wall_points):
                 name, = call('AddInternalWallNode',m.PointObj.AddCartesian,*point,level*spec.project.story_height_m,'')
                 nodes[level,point] = name
-    masters, mapping = [], []
+    masters, mapping, connections = [], [], {}
     for floor in data.floors:
         story = floor.story
         diaphragm = f'SL_D{story}'
@@ -97,6 +105,22 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
                         'etabs_object':name,'mesh_piece':part})
             else:
                 name, = call('AddBeam',m.FrameObj.AddByPoint,a,b,'',member.role)
+                if connection_mode is not None:
+                    release_this = connection_mode == 'pinned_bending' and (release_scope == 'all'
+                        or (member.start in wall_points and member.end in wall_points))
+                    if connection_mode in ('zero_offsets','pinned_bending'):
+                        call('ExplicitZeroEndOffsets',m.FrameObj.SetEndLengthOffset,name,False,0.,0.,0.)
+                    if release_this:
+                        release = [False,False,False,False,True,True]
+                        call('ReleaseBothBendingAxes',m.FrameObj.SetReleases,name,release,release,[0.]*6,[0.]*6)
+                    assigned = {'bending_released':release_this,
+                        'offsets':call('ReadConnectionOffsets',m.FrameObj.GetEndLengthOffset,name),
+                        'releases':call('ReadConnectionReleases',m.FrameObj.GetReleases,name)}
+                    if connection_mode in ('zero_offsets','pinned_bending') and tuple(assigned['offsets']) != (False,0.,0.,0.):
+                        raise ValueError('Explicit zero-offset readback mismatch')
+                    if release_this and any(list(a) != release for a in assigned['releases'][:2]):
+                        raise ValueError('Bending release readback mismatch')
+                    connections[name] = assigned
                 mapping.append({'story':story,'source_id':member.member_id,'role':member.role,'etabs_object':name})
         print(f'STAGE residential_floor_{story}_built',flush=True)
     call('PrescribedMassSource',m.PropMaterial.SetMassSource_1,False,True,False,0,[],[])
@@ -145,6 +169,15 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
     state = dict(zip(status[1],status[2]))
     if any(state.get(case)!=4 for case in cases):
         raise RuntimeError(f'Residential cases incomplete: {state}')
+    from .solver_health import solver_health
+    health = solver_health(directory/'model.LOG')
+    write_json(directory/'solver_health.json',health)
+    if not health['verified']:
+        raise RuntimeError(f'Unsafe native solver stability result: {health}')
+    if connection_mode is not None:
+        from .connection_audit import analysis_line_connections
+        connections = {'assignments':connections, 'resolved':analysis_line_connections(client,list(connections))}
+        write_json(directory/'analysis_connections.json',connections)
     outputs, checks = {}, {}
     for case in cases[:2]:
         call('DeselectOutput',m.Results.Setup.DeselectAllCasesAndCombosForOutput)
@@ -158,6 +191,25 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
             spec.roof_force_n,case[-1])
         checks[case]['finite_floor_responses'] = all(math.isfinite(f[0][key]) for f in floors for key in ('u1','u2','r3'))
         outputs[case] = {'floors':floors,'base_reactions':reactions,'reaction_reference_xyz_m':raw[-3:]}
+        if connection_mode is not None:
+            beam_forces = {}
+            for item in mapping:
+                if item['role'] == 'wall':
+                    continue
+                name = item['etabs_object']
+                beam_forces[name] = rows(call('ConnectionBeamForce',m.Results.FrameForce,name,0),
+                    ('object','object_station','element','element_station','case','step_type','step',
+                     'p','v2','v3','t','m2','m3'),operation='ConnectionBeamForce')
+                if any(row['case'] != case or not all(math.isfinite(row[k]) for k in ('p','v2','v3','t','m2','m3'))
+                        for row in beam_forces[name]):
+                    raise ValueError('Invalid connection beam-force output')
+            outputs[case]['beam_forces_n_nm'] = beam_forces
+            if connection_mode == 'pinned_bending':
+                maximum = max(abs(row[k]) for name,values in beam_forces.items()
+                    if connections['assignments'][name]['bending_released'] for row in values for k in ('m2','m3'))
+                span = max(math.dist(member.start,member.end) for member in data.layout.members if member.role != 'wall')
+                checks[case]['released_beam_bending_zero'] = maximum <= spec.roof_force_n*max(1.,span)*1e-7
+                outputs[case]['max_released_end_moment_nm'] = maximum
     call('DeselectOutput',m.Results.Setup.DeselectAllCasesAndCombosForOutput)
     call('SelectModal',m.Results.Setup.SetCaseSelectedForOutput,'MODAL_CHECK')
     call('AllModeShapes',m.Results.Setup.SetOptionModeShape,1,12,True)
@@ -179,5 +231,6 @@ def build_and_analyze(client: ETABSClient, spec: ResidentialSpec, directory: Pat
         'verified':all(all(check.values()) for check in checks.values()),'checks':checks,
         'case_status':state,'static':outputs,'modes':modal,'floor_mode_shapes':shapes,'beam_theory':beam_theory,
         'wall_vertical_subdivisions':wall_vertical_subdivisions,
+        'connection_mode':connection_mode,
         'prescribed_floor_masses_kg':[f.mass_kg for f in data.floors],
         'engineering_feasibility':'NOT_EVALUATED','reinforcement':'NOT_EVALUATED'}

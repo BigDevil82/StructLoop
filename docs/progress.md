@@ -43,7 +43,46 @@
 完整负面发现、控制组和两端原始结果均保留，见 `x_displacement_checks.md` 与 `outputs/reports/x_displacement/report.md`。
 不得把细网格某次结果指定为真值或直接写入GA/代理标签。
 
-## 本批任务：结构超限原因检查
+## 本批任务：实际端区与梁墙弯矩通道
+
+起点6504892，工作区干净。保持residential_001和获准12层条件，原通过项不重开。
+
+- 扩展连接审查到FrameObj.GetElm/LineElm实际分析端区；新增 `connection_study.py`，
+  两端弯曲释放采用类型化受控选项，并以实际端弯矩为0验证，而非仅检查API返回码。
+- 12层墙梁组合的分析端区、插入偏移全为0；原超限逐层响应复现差为0，跳过重复零端区求解。
+  刚接MVLEM取中点后原51个超限项在探针中全部进入5%；弯矩释放本身不能消除c=0.4的低层偏差。
+  壳替换首层X异常则由110.15%降到1.51%，区分了积分偏差和换壳后的连接效应。
+- 整栋首次全部释放使无墙支承的梁节点失去竖向刚度，ETABS报告不稳定/病态、OpenSees因奇异矩阵失败。
+  `whole_connection_01`判无效，完整保留，不用于数值对照，不加假支座/微刚度。
+- 直接修复明确验证bug：住宅ETABS诊断新增 `solver_health.py`，保存/检查原生日志；
+  即使工况完成且负特征值为0，也拒绝明确不稳定警告。既有三个整栋归档及五个小模型日志复查通过，
+  原无效模型正确被拒绝。类型化输入及native适配层同时拒绝无墙支承节点的全释放。
+- 第二轮仅释放57条墙—墙源梁（684根楼层梁），保留另24条（288根）；原几何/材料/质量/加载点保持。
+  ETABS稳定性、两端整体平衡与被释放端弯矩检查均通过。MVLEM屋顶X/Y仍差11.35%/12.65%，
+  壳反事实仍差34.29%/9.44%，因此这57条梁通道不能单独解释整栋剩余问题。
+- 细化整栋有效探针中，原121项超限分别有7项/15项进入5%；不与其他模型的通过项拼接验收。
+  后续应分离剩余24条梁的墙端转角及墙体内部运动学。生产物理实现/指纹、源图及权重未改。
+- 工件：`outputs/current/beam_wall_connection_01/`、无效 `whole_connection_01/`、有效 `whole_connection_02/`；
+  汇总 `outputs/reports/connection_diagnosis_01/`；哈希及失败重试链 `configs/connection_diagnosis_evidence.json`。
+  具体结论见 `docs/beam_wall_connections.md`。
+
+验证命令：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_connection_audit.py tests/unit/test_connection_study.py tests/unit/test_solver_health.py tests/integration/test_structural_subsystem.py --run-real
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.connection_study --run outputs/current/beam_wall_connection_01 --report outputs/reports/beam_wall_connection_01
+.venv/Scripts/python.exe -m struct_agent.adapters.etabs.connection_study --whole-building-fine --run outputs/current/whole_connection_02 --report outputs/reports/whole_connection_02
+.venv/Scripts/python.exe -m pytest -q
+git diff --check
+```
+
+目标14 passed（1.26s）；默认159 passed、32 skipped、1个既有PyG弃用提示（10.58s）。
+15项证据索引和145个执行/当前源码哈希验证通过，暂存差异检查通过；仅提交源码、测试、文档和配置/哈希。
+墙梁ETABS约93.39s，有效整栋ETABS约118.22s，整栋native MVLEM/Shell约71.03s/46.27s。
+首次新增测试有括号缺失，修正后重跑通过；失败整栋的错误类型、traceback与原生日志保留。
+无GA、模型训练、学校API或YJK重试。
+
+## 上一批：结构超限原因检查（6504892）
 
 起点31a5160，工作区干净。仅检查原超限项，原通过项不重开；没有修改生产参数或重训模型。
 
@@ -154,8 +193,8 @@ ETABS正式复跑176.47s，状态SUCCESS仅指工况及响应检查，不是跨�
 
 ## 后续批次
 
-保持原质量、加载点和截面，成组隔离梁墙节点的弯矩/转角传递，核查分析线单元实际端区或显式关闭自动端区作对照。
-据此定位整栋细网格超限的剩余原因；不直接用中点或换壳反事实替换生产方案。
+保持梁间节点支承，分离剩余24条梁的墙端转角和墙体内部接点运动学，继续定位整栋细网格超限。
+不再重复已证实为零的墙梁组合端区，不直接用中点或换壳反事实替换生产方案。
 已通过单墙、子系统周期及主响应不再核查校准；不再进行单墙水平离散/泊松补查。
 之后补重力/地震谱/组合和规范配筋独立复核。
 分析基础与几何受理问题解决后，才进入正式优化、代理兼容性验证及等预算策略比较。

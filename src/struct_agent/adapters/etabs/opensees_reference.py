@@ -79,6 +79,16 @@ def run_reference(spec: ResidentialSpec, directory: Path, *, mesh: ReferenceMesh
             checks[direction] = roof_equilibrium(named,(0.,0.,0.),(*data.centre_xy_m,data.floors[-1].elevation_m),spec.roof_force_n,direction)
             checks[direction]['finite_floors'] = all(math.isfinite(v) for row in floors for v in row.values())
             static['ROOF_'+direction] = {'floors':floors,'base_reactions':named}
+            if mesh.beam_bending_released:
+                local = {str(b.element_tag):list(ops.eleResponse(b.element_tag,'localForce'))
+                    for b in build.beam_element_units if b.element_tag in mesh_info['released_beam_tags']}
+                if any(len(row) != 12 or not all(math.isfinite(v) for v in row) for row in local.values()):
+                    raise ValueError('Missing released-beam force vectors')
+                maximum = max(abs(row[i]) for row in local.values() for i in (4,5,10,11))
+                limit = spec.roof_force_n*max(1.,*(b.length for b in build.beam_element_units))*1e-7
+                checks[direction]['released_beam_bending_zero'] = maximum <= limit
+                static['ROOF_'+direction]['beam_local_forces_n_nm'] = local
+                static['ROOF_'+direction]['max_released_end_moment_nm'] = maximum
             ops.remove('loadPattern',index)
         result = {'purpose':'RESIDENTIAL_ELASTIC_LATERAL_DIAGNOSTIC','units':'N_m_kg_s','solver':ops.version(),
             'analysis_signature':analysis_signature(),'periods_s':periods,'floor_mode_shapes':shapes,

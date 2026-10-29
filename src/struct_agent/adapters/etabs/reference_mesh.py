@@ -15,9 +15,13 @@ class ReferenceMesh(Contract):
     wall_formulation: Literal['mvlem', 'shell_dkgq'] = 'mvlem'
     center_of_rotation: Literal[0.4, 0.5] = 0.4
     plate_poisson: float | None = Field(default=None, ge=0., lt=.5)
+    beam_bending_released: bool = False
+    beam_release_scope: Literal['all','wall_to_wall'] = 'all'
 
     @model_validator(mode='after')
     def applicable_options(self) -> ReferenceMesh:
+        if not self.beam_bending_released and self.beam_release_scope != 'all':
+            raise ValueError('A beam release scope requires beam_bending_released')
         if self.wall_formulation == 'shell_dkgq' and (self.center_of_rotation != .4
                 or self.plate_poisson is not None or self.fiber_refinement != 1):
             raise ValueError('MVLEM-specific options cannot be applied to a shell diagnostic')
@@ -44,6 +48,29 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
     if len(beams)+len(units)!=len(initial_tags):
         raise ValueError('Unexpected initial element coverage')
     profiles = config.resolve_story_profiles()
+    released_beams = []
+    if mesh.beam_bending_released:
+        from struct_agent._vendor.shearwall_modeling.builders.mvlem_frame import _beam_section_props
+        if not build.beam_element_units:
+            raise ValueError('No source beams to release')
+        transform = 9000000
+        ops.geomTransf('Linear',transform,0.,0.,1.)
+        wall_nodes = {p for unit in units for p in (*unit.bottom_nodes,*unit.top_nodes)}
+        for beam in build.beam_element_units:
+            ends = ops.eleNodes(beam.element_tag)
+            supported = all(p in wall_nodes for p in ends)
+            if not supported:
+                if mesh.beam_release_scope == 'all':
+                    raise ValueError('All-end releases leave unsupported vertical joints')
+                continue
+            profile = profiles[beam.story-1]
+            area,j,iy,iz = _beam_section_props(beam.width,beam.depth)
+            ops.remove('element',beam.element_tag)
+            ops.element('elasticBeamColumn',beam.element_tag,*ends,area,float(profile.material.E),
+                float(profile.material.G),j,iy,iz,transform,'-releasey',3,'-releasez',3)
+            released_beams.append(beam.element_tag)
+        if not released_beams:
+            raise ValueError('No wall-supported beam pairs to release')
     next_node,next_element = max(ops.getNodeTags())+1,max(initial_tags)+1
     nodes: dict[tuple[float,...],int] = {}
     for unit in units:
@@ -115,4 +142,5 @@ def refine(build: Any, config: Any, mesh: ReferenceMesh) -> dict[str,Any]:
         raise ValueError('Refinement lost or duplicated a physical member')
     return {'options':mesh.model_dump(),'wall_elements':len(units)*mesh.vertical_subdivisions,
         'beam_elements':len(beams),'node_count':len(ops.getNodeTags()),'wall_mapping':mapping,
+        'released_beam_tags':released_beams,
         'added_floor_masses':0,'added_floor_beams':0,'added_diaphragms':0,'member_design_extraction_supported':False}

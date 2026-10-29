@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,30 @@ from struct_agent.io.artifacts import sha256, write_json
 from .client import ETABSClient
 from .contracts import ConnectionAuditSpec, ETABSConfig
 from .runtime import run_verification
+
+
+def analysis_line_connections(client: ETABSClient, names: list[str]) -> dict[str, Any]:
+    """Resolved analysis-element offsets, not the object's automatic inputs."""
+    m, call = client.model, client.call
+    result = {}
+    for name in names:
+        count, elements, rdi, rdj = call('ConnectionAnalysisElements',m.FrameObj.GetElm,name)
+        if count <= 0 or any(len(values) != count for values in (elements,rdi,rdj)):
+            raise ValueError('Missing generated analysis line elements')
+        lines = []
+        for element, start, end in zip(elements,rdi,rdj):
+            offsets = call('ConnectionResolvedOffsets',m.LineElm.GetEndLengthOffset,element)
+            insertion = call('ConnectionResolvedInsertion',m.LineElm.GetInsertionPoint,element)
+            if len(offsets) != 3 or not all(math.isfinite(x) for x in offsets):
+                raise ValueError('Invalid resolved analysis offsets')
+            lines.append({'element':element,'object_relative_start':start,'object_relative_end':end,
+                'end_length_offsets_m_and_rz':offsets,'insertion_offsets_m':insertion})
+        result[name] = lines
+    if not result:
+        raise ValueError('No analysis connections requested')
+    zero = all(abs(x) <= 1e-10 for lines in result.values() for line in lines
+        for x in line['end_length_offsets_m_and_rz'][:2])
+    return {'frames':result,'all_resolved_end_lengths_zero':zero}
 
 
 def inspect_connections(client: ETABSClient, spec: ConnectionAuditSpec, directory: Path) -> dict[str, Any]:

@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from struct_agent.adapters.etabs.connection_audit import inspect_connections
+from struct_agent.adapters.etabs.connection_audit import inspect_connections, analysis_line_connections
 from struct_agent.adapters.etabs.contracts import ConnectionAuditSpec, ETABSRequest, ETABSConfig
 from struct_agent.io.artifacts import sha256
 
@@ -61,3 +61,17 @@ def test_audit_request_roundtrip_and_path_scope(tmp_path: Path) -> None:
     for path in (Path('relative.EDB'), tmp_path/'not_edb.txt'):
         with pytest.raises(ValueError):
             ConnectionAuditSpec(model=path,model_sha256='0'*64)
+
+
+def test_resolved_analysis_offsets_do_not_use_automatic_object_placeholders() -> None:
+    client = ReadOnlyClient()
+    client.model.FrameObj.GetElm = None
+    client.model.LineElm = SimpleNamespace(GetEndLengthOffset=None,GetInsertionPoint=None)
+    def call(operation: str, method: Any, *args: Any) -> tuple[Any,...]:
+        return {'ConnectionAnalysisElements':(1,['line1'],[0.],[1.]),
+            'ConnectionResolvedOffsets':(.25,0.,.5),
+            'ConnectionResolvedInsertion':([0.]*3,[0.]*3)}[operation]
+    client.call = call
+    result = analysis_line_connections(client,['B1'])
+    assert not result['all_resolved_end_lengths_zero']
+    assert result['frames']['B1'][0]['end_length_offsets_m_and_rz'][0] == .25

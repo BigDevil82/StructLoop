@@ -116,12 +116,35 @@ class ConnectionAuditSpec(Contract):
         return self
 
 
+class ConnectionStudySpec(Contract):
+    """Fixed beam-connection counterfactuals, with unchanged parent inputs."""
+    kind: Literal['connection_study'] = 'connection_study'
+    residential: ResidentialSpec
+    modes: tuple[Literal['default','pinned_bending'], ...] = ('default','pinned_bending')
+    release_scope: Literal['all','wall_to_wall'] = 'all'
+
+    @model_validator(mode='after')
+    def bounded_beams(self) -> ConnectionStudySpec:
+        count = sum(m.role != 'wall' for m in self.residential.layout.members)
+        if not 1 <= count <= 100:
+            raise ValueError('Connection study requires one to 100 source beams')
+        if self.modes not in (('default','pinned_bending'),('pinned_bending',)):
+            raise ValueError('Only the fixed paired or pinned-only diagnostic is supported')
+        wall_points = {p for m in self.residential.layout.members if m.role == 'wall' for p in (m.start,m.end)}
+        if self.release_scope == 'all' and any(m.start not in wall_points or m.end not in wall_points
+                for m in self.residential.layout.members if m.role != 'wall'):
+            raise ValueError('All-end releases leave unsupported vertical joints; use wall_to_wall scope')
+        return self
+
+
 class ETABSRequest(Contract):
     config: ETABSConfig
-    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec = Field(discriminator='kind')
+    spec: CantileverSpec | ResidentialSpec | SingleWallSpec | StructuralBatchSpec | ConnectionAuditSpec | ConnectionStudySpec = Field(discriminator='kind')
 
     @model_validator(mode='after')
     def theory_scope(self) -> ETABSRequest:
-        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
+        if isinstance(self.spec,ConnectionStudySpec) and self.config.beam_theory != 'euler_comparison':
+            raise ValueError('Connection study fixes Euler beams')
+        if not isinstance(self.spec,(ResidentialSpec,StructuralBatchSpec,ConnectionStudySpec)) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
             raise ValueError('Beam/mesh comparison options are supported only for the residential diagnostic')
         return self

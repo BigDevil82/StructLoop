@@ -27,6 +27,8 @@ outputs/
 | L/T形墙、墙梁组合原生证据及整栋归档输入副本 | `outputs/current/structural_comparison_01/` |
 | 结构超限归因 | `outputs/reports/exceedance_causes_01/`，详细结论 `docs/exceedance_causes.md`，索引 `configs/exceedance_causes_evidence.json` |
 | 梁墙壳替换补充及ETABS只读连接设置 | `outputs/{current,reports}/exceedance_wall_beam_shell_01/`、`outputs/current/connection_audit_{01,02}/` |
+| 实际端区与梁墙弯矩通道汇总 | `outputs/reports/connection_diagnosis_01/`，索引 `configs/connection_diagnosis_evidence.json` |
+| 墙梁/整栋连接探针 | `outputs/current/beam_wall_connection_01/`、`whole_connection_02/`；无效 `whole_connection_01/`完整保留且排除比较 |
 | 全部38个已完成运行 | `outputs/archive/evidence_20261029.zip`，原始目录名保持不变 |
 
 归档整理时建立的当前输入、回归文件和原两份报告是逐字节副本，不是重新求解结果。
