@@ -43,12 +43,33 @@ class ResidentialSpec(Contract):
         return self
 
 
+class SingleWallSpec(Contract):
+    """Residential-derived, uniform-thickness reduction; not a design model."""
+    kind: Literal['single_wall'] = 'single_wall'
+    residential: ResidentialSpec
+    source_member_id: str = Field(min_length=1)
+    subdivisions: tuple[int, ...] = (1, 2, 4, 8)
+    fibers: int = Field(default=64, ge=8, le=128)
+    tip_force_n: float = Field(default=10000., gt=0.)
+
+    @model_validator(mode='after')
+    def bounded_study(self) -> SingleWallSpec:
+        if (not self.subdivisions or tuple(sorted(set(self.subdivisions))) != self.subdivisions
+                or any(n not in (1, 2, 4, 8) for n in self.subdivisions)):
+            raise ValueError('Unique increasing subdivisions from 1/2/4/8 required')
+        walls = [m for m in self.residential.layout.members
+                 if m.member_id == self.source_member_id and m.role == 'wall']
+        if len(walls) != 1:
+            raise ValueError('Source must identify exactly one current wall member')
+        return self
+
+
 class ETABSRequest(Contract):
     config: ETABSConfig
-    spec: CantileverSpec | ResidentialSpec = Field(discriminator='kind')
+    spec: CantileverSpec | ResidentialSpec | SingleWallSpec = Field(discriminator='kind')
 
     @model_validator(mode='after')
     def theory_scope(self) -> ETABSRequest:
-        if isinstance(self.spec,CantileverSpec) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
+        if not isinstance(self.spec,ResidentialSpec) and (self.config.beam_theory!='timoshenko' or self.config.wall_vertical_subdivisions!=1):
             raise ValueError('Beam/mesh comparison options are supported only for the residential diagnostic')
         return self

@@ -14,7 +14,7 @@
 | CASINO | 会话、局部校准与筛选接口已接入；旧权重未经修正后标签兼容性验证，真实优化默认禁用代理 |
 | Agent | 固定/规则/学校LLM、预算、候选切换、审批和决策回放；真实LLM与跨布局调用仅作冒烟 |
 | OpenSees | 建模、反应谱/组合与本地简化校核可运行；修复了已发现的物理/材料计算错误，工程正确性尚未完整验证 |
-| ETABS 18.1 | 独立后台实例建模、保存、弹性静力/模态及提取已实测；重力/谱/组合/设计配筋尚未对照 |
+| ETABS 18.1 | 独立实例弹性静力/模态及两端单墙网格对照已实测；重力/谱/组合/设计配筋尚未对照 |
 | YJK 2025 | 官方API导入及部分几何导出成功；ReadYdb原生崩溃、隐藏宿主脚本回调未打通，已停止重试 |
 
 关键说明：求解成功、回归测试通过及软件间数值接近，都不能代替网格收敛、规范校核和工程签审。
@@ -42,47 +42,50 @@
 完整负面发现、控制组和两端原始结果均保留，见 `x_displacement_checks.md` 与 `outputs/reports/x_displacement/report.md`。
 不得把细网格某次结果指定为真值或直接写入GA/代理标签。
 
-## 本次任务：进一步整理outputs
+## 本次任务：同边界单片墙解析与竖向网格对照
 
-上一轮已删除48个过期运行并清理文档，清单见 `cleanup_2026-10-29.json`，提交8ea5d8b。
-用户要求继续清理outputs，本轮将剩余38个独立运行压缩归档，只直接展开当前输入、回归文件及两份主要报告。
+起点399d8f3，工作区干净。上一轮38个运行已归档，入口仍按 `output_management.md`，未重复迁移或改写旧证据。
+本轮仅完成Phase 4的单墙最小切片，未扩展L/T形墙、墙梁或开展正式优化。
 
-```text
-outputs/
-├── current/       # residential_001布局/房间图与12层参数
-├── reference/     # 当前FEA回归与RC-GNN上游对照文件
-├── reports/       # X向/网格诊断和ETABS对照报告
-└── archive/       # evidence_20261029.zip，原38个完整运行
-```
-
-- 38个原目录整体入ZIP，1246个原文件逐一校验SHA256后删除松散原件；ZIP约77.4 MiB。
-- outputs直接展开的文件及ZIP/说明共32个，总占用196924658→86879640字节，即187.80→82.85 MiB，另释放104.95 MiB。
-- 当前输入、两个回归视图及两个报告视图为原件逐字节副本，共6个子目录；它们不是新求解记录。
-- 所有原模型、日志、运行源码、失败及不收敛结果、批准记录均保存在ZIP中，没有筛除不利结果。
-- 归档验证：38棵原目录树哈希、6个当前副本树哈希及61项outputs内输入依赖哈希通过。
-- 原manifest中的执行时绝对路径原样保留，旧outputs/<run>/...映射至ZIP内<run>/...；查 `outputs_archive_index.json`，不能当成仍存在的磁盘路径。
-- `real_fea_reference.json`只更新路径，数据哈希不变；solver_inventory使用明确的archive/member引用或当前报告路径。
-- 两处集成测试改读reference目录；README及相关说明同步新入口。生产代码、物理指纹、权重、原图、环境与密钥未修改。
-- 安全删除只针对校验过的叶文件和空目录，未使用递归删除；归档创建和核验成功后才删除原目录。
-- 树哈希复验按原Windows Path顺序排序；首次用字符串排序导致验证拒绝，纠正排序后38项全部吻合。未改动归档数据。
+- 新增 `adapters/etabs/wall_{input,etabs,opensees,study}.py`，扩展类型化请求、固定worker及CLI。
+  无新依赖；两端共用几何/材料/荷载/边界定义，保存原生模型、逐节点位移、六分量平衡、源码和SHA256。
+- 来源为当前布局 `shearwalls_3`（2.3m），12×2.9m；全高简化为底区200mm墙厚、E=30GPa、nu=0.2。
+  无自重/质量/梁/显式楼板，单墙XZ平面化，两种真实楼层约束、每层1/2/4/8片。
+  这些是显式诊断简化，不代替住宅完整分区或工程条件确认。
+- ETABS 10个工况、OpenSees 10个配对及2个纤维控制全部通过平衡与有限响应检查；
+  MVLEM全部与独立离散应变能解一致。实际结果和解析假设见 `x_displacement_checks.md`。
+- 1→8片时ETABS位移22.917675→22.279994mm，OpenSees23.712495→23.241969mm，分别−2.7825%/−1.9843%。
+  单墙未复现整栋显著变软；本平面单墙有/无楼层刚性楼板几乎相同，不能外推L/T形墙。
+- 零泊松控制中两软件差从−4.1390%变为−0.3788%；提示泊松/面内离散约束值得排查，
+  尚不能确认水平锁定机制或将任一软件/细网格视为真值。整栋仍未验证、网格仍未证明收敛。
+- 初次ETABS运行因默认D1重名返回API码1；修正为独立名称后在新目录完整复跑。
+  `_01`失败与部分结果、`_02`完整结果均保留；初步单次native probe不参与配对结论。
+  `configs/single_wall_evidence.json`记录工件哈希及重试链，不能作为GA标签或生产回归真值。
+- 工件：`outputs/current/single_wall_12_02/`；报告 `outputs/reports/single_wall_12_02/report.md`。
+  `docs/output_management.md`及ETABS说明同步；生产建模器、物理指纹、RC-GNN/CASINO权重不变。
 
 验证命令：
 
 ```powershell
-.venv/Scripts/python.exe -m pytest -q --run-real tests/integration/test_real_adapters.py tests/integration/test_member_diagnostics.py tests/integration/test_symmetry_reference.py tests/integration/test_casino_session.py
+.venv/Scripts/python.exe -m pytest -q tests/unit/test_single_wall.py tests/unit/test_etabs.py tests/integration/test_single_wall_mechanics.py tests/integration/test_substructure_convergence.py --run-real
+.venv/Scripts/python.exe -m struct_agent.etabs_cli single-wall --layout outputs/current/residential_001/layout.json --spec configs/etabs_12_story_spec.json --design outputs/current/design_12_story/design.json --wall-member shearwalls_3 --timeout 600 --run outputs/current/single_wall_12_02 --comparison outputs/reports/single_wall_12_02
 .venv/Scripts/python.exe -m pytest -q
 .venv/Scripts/python.exe -m pytest -q --run-real
 git diff --check
 ```
 
-结果：目标12 passed、8 warnings（27.23s）；默认129 passed、25 skipped、1 warning（11.51s）；
-完整真实154 passed、0 skipped、8 warnings（29.97s）。提示均为既有PyG/ezdxf弃用提示；diff检查通过。
-本轮没有新建真实住宅运行、学校API调用或GA；测试在临时目录复算回归。
-当前单元/整栋可靠性边界未改变，网格未收敛与短物理墙肢问题仍待解决。
+结果：目标28 passed（0.33s）；默认134 passed、28 skipped、1 warning（10.54s）；
+完整真实162 passed、0 skipped、8 warnings（31.00s）。提示均为既有PyG/ezdxf弃用提示。
+ETABS正式复跑176.47s，状态SUCCESS仅指工况及响应检查，不是跨软件验收。
+证据复验：11个索引哈希、437个原始工件哈希及139个执行源码/工作区源码哈希全部一致；
+暂存内容仅含源码、测试、文档与证据索引，`git diff --cached --check`通过。
+首次pytest因两个新测试文件同名产生收集错误，已将集成文件改为test_single_wall_mechanics.py后重跑通过。
+本轮没有学校API、GA、模型训练或YJK重试。
 
 ## 下一最小任务
 
-两端一致的单片墙→L/T形墙→墙梁子结构，分开检查有/无刚性楼板、共节点和高度细分的影响，
-定位粗网格过硬及细化后差异，确定生产单元/网格策略。之后再补重力/地震谱/组合和规范配筋独立复核。
+先固定本单墙物理条件增加ETABS水平离散/泊松伸缩控制，再扩展共边L/T形墙→墙梁连接，
+分开检查真实楼层刚性楼板、共节点和高度细分，定位整栋粗网格过硬及两端差异。
+之后确定生产单元/网格策略，补重力/地震谱/组合和规范配筋独立复核。
 分析基础与几何受理问题解决后，才进入正式优化、代理兼容性验证及等预算策略比较。
 人工审批界面、磁盘恢复、DWG和工程成果输出仍属于后续阶段。

@@ -4,14 +4,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from struct_agent.adapters.etabs.contracts import CantileverSpec,ResidentialSpec,ETABSConfig
+from struct_agent.adapters.etabs.contracts import CantileverSpec,ResidentialSpec,SingleWallSpec,ETABSConfig
 from struct_agent.adapters.etabs.runtime import run_verification
 from struct_agent.schemas import ProjectSpec,LayoutCandidate,DesignCandidate
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('case',choices=('cantilever','residential'))
+    parser.add_argument('case',choices=('cantilever','residential','single-wall'))
     parser.add_argument('--run',type=Path,required=True)
     parser.add_argument('--timeout',type=float,default=600.)
     parser.add_argument('--beam-theory',choices=('timoshenko','euler_comparison'),default='timoshenko')
@@ -23,7 +23,26 @@ def main() -> None:
     parser.add_argument('--design',type=Path)
     parser.add_argument('--opensees-reference',type=Path)
     parser.add_argument('--comparison',type=Path)
+    parser.add_argument('--wall-member',type=str)
     args = parser.parse_args()
+    if args.case == 'single-wall':
+        if args.layout is None or args.design is None or args.wall_member is None or args.comparison is None:
+            parser.error('single-wall requires --layout, --design, --wall-member and --comparison')
+        if (args.beam_theory != 'timoshenko' or args.wall_vertical_subdivisions != 1
+                or args.reference_wall_subdivisions != 1 or args.reference_fiber_refinement != 1
+                or args.opensees_reference is not None):
+            parser.error('single-wall uses its own fixed paired mesh study')
+        from struct_agent.adapters.etabs.wall_study import run_wall_study
+        residential = ResidentialSpec(project=ProjectSpec.model_validate_json(args.spec.read_bytes()),
+            layout=LayoutCandidate.model_validate_json(args.layout.read_bytes()),
+            design=DesignCandidate.model_validate_json(args.design.read_bytes()))
+        result = run_wall_study(SingleWallSpec(residential=residential,source_member_id=args.wall_member),
+            args.run,args.comparison,ETABSConfig(timeout_s=args.timeout),
+            inputs={'layout':args.layout,'project':args.spec,'design':args.design})
+        print(f"Single wall: {result['status']}; run={args.run}; report={args.comparison}")
+        return
+    if args.wall_member is not None:
+        parser.error('--wall-member requires single-wall')
     if (args.reference_wall_subdivisions!=1 or args.reference_fiber_refinement!=1 or args.comparison) and args.opensees_reference is None:
         parser.error('Reference mesh/comparison options require --opensees-reference')
     if args.case=='cantilever' and (args.beam_theory!='timoshenko' or args.wall_vertical_subdivisions!=1 or args.opensees_reference is not None):

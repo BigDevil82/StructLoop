@@ -181,6 +181,9 @@ ETABS小模型与12层住宅对照见 [docs/etabs_cross_validation.md](docs/etab
 固定入口为 `python -m struct_agent.etabs_cli`，只创建独立实例，不附着用户工程。
 12层条件独立保存在 `configs/etabs_12_story_spec.json`，原28层配置不变。
 当前只完成弹性水平诊断和解析解验证；新增检查发现两端整栋竖向网格敏感、尚未收敛，见 [子结构与网格检查](docs/x_displacement_checks.md)。尚未完成ETABS重力/反应谱/配筋复核，不能作为工程通过结论。
+同边界单墙已完成有/无真实楼层刚性楼板的1/2/4/8片对照及零泊松控制；
+可用 `.venv/Scripts/python.exe -m struct_agent.etabs_cli single-wall --help` 查看入口，完整复现命令和结果见上述文档。
+单墙未复现整栋显著变软，当前仍不开展正式优化。
 
 ## Git 与本地数据
 

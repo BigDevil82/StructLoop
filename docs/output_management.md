@@ -21,9 +21,13 @@ outputs/
 | 上游几何/会话集成测试 | `outputs/reference/rcgnn_upstream/`，原RC-GNN _02工件 |
 | X向/网格诊断 | `outputs/reports/x_displacement/report.md` |
 | ETABS独立对照 | `outputs/reports/etabs_comparison/report.md` |
+| 同边界单墙解析/网格对照 | `outputs/reports/single_wall_12_02/report.md`，哈希/重试链见 `configs/single_wall_evidence.json` |
+| 单墙正式原生证据 | `outputs/current/single_wall_12_02/`（10个ETABS、12个OpenSees工况） |
 | 全部38个已完成运行 | `outputs/archive/evidence_20261029.zip`，原始目录名保持不变 |
 
-当前输入、回归文件和报告是原运行的逐字节副本，不是重新求解结果。
+归档整理时建立的当前输入、回归文件和原两份报告是逐字节副本，不是重新求解结果。
+新增单墙报告来自本轮真实求解，不属于原38项归档。`single_wall_12_01`的失败/部分结果保留在current；
+`single_wall_native_probe_01`为仅有输入/结果的初步Adapter试算，不参与配对结论。两者均由新证据索引注明。
 完整原件均在ZIP中，包括原模型、原生日志、执行源代码、负面网格发现、YJK失败、LLM历史及批准记录。
 归档前后逐文件SHA256核验。旧28层轨迹及RC-GNN旧版输出不能混作当前物理标签。
 整栋网格仍未收敛，不因整理改变结论。

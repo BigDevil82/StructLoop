@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "purpose": "DIAGNOSTIC_EVIDENCE_INDEX_NOT_A_REGRESSION_TRUTH",
+  "case_id": "residential_001",
+  "layout_id": "residential_001_rcgnn_03",
+  "condition_id": "residential_001_12_story_crosscheck_smoke",
+  "source_member_id": "shearwalls_3",
+  "status": "DIFFERENCES_REPORTED_NOT_ACCEPTANCE",
+  "mesh_status": "MESH_CONVERGENCE_NOT_ESTABLISHED",
+  "artifacts": {
+    "study_manifest": {
+      "path": "outputs/current/single_wall_12_02/manifest.json",
+      "sha256": "38a180e1c195fbd287901a9bbd09a67bf863fece9ac5d866fa9fde755495757c"
+    },
+    "request": {
+      "path": "outputs/current/single_wall_12_02/request.json",
+      "sha256": "00d886d6af266271cc280cac46d3ea39d7f16506e9d476e1d02f0de3ca298136"
+    },
+    "source_snapshot": {
+      "path": "outputs/current/single_wall_12_02/etabs/source_snapshot.json",
+      "sha256": "2e086281db89524b14f6a58ab1695f6a68f610f9dab1b8416a48981b1c6b52ef"
+    },
+    "etabs_outcome": {
+      "path": "outputs/current/single_wall_12_02/etabs/outcome.json",
+      "sha256": "2d8365fe8adb0b29de167287185338fffcbb291fc476ce94b8f57e01caca156f"
+    },
+    "opensees_results": {
+      "path": "outputs/current/single_wall_12_02/opensees_results.json",
+      "sha256": "a29fd5f835138c8d7c3617b795f3664bb46253754cff8fcb08a0ffb0616cc548"
+    },
+    "comparison": {
+      "path": "outputs/reports/single_wall_12_02/comparison.json",
+      "sha256": "de7f2c37204d107864542ec38311a37d093a28c97ed7615919c952a89b7a7ebb"
+    },
+    "report": {
+      "path": "outputs/reports/single_wall_12_02/report.md",
+      "sha256": "ab468f767b7738ff3728392e458c75de12c0ee7a35a8dcaf67a52debbd9cf46d"
+    },
+    "evidence_hashes": {
+      "path": "outputs/reports/single_wall_12_02/evidence_hashes.json",
+      "sha256": "a8e7db9fb50f5ad7188a7c514d5673385447ce72c7bd630d035e43fbcc37cb69"
+    },
+    "failed_attempt_outcome": {
+      "path": "outputs/current/single_wall_12_01/etabs/outcome.json",
+      "sha256": "894d7dd0c57b420d2c4f9211c374533073afd160c2fc2d7761b3e32282105773"
+    },
+    "failed_attempt_error": {
+      "path": "outputs/current/single_wall_12_01/etabs/worker_error.json",
+      "sha256": "6853580719c31eaf3e0be501de302ef161e6aa27e1c04eb299cd98aa86ee9377"
+    },
+    "preliminary_probe_input": {
+      "path": "outputs/current/single_wall_native_probe_01/input.json",
+      "sha256": "56fa3968b129ae36a3a7f150a01cd952f348c1e091f6ec5c2b108272ece04bc6"
+    }
+  },
+  "retry_history": [
+    {
+      "attempt": 1,
+      "run": "outputs/current/single_wall_12_01",
+      "status": "PROCESS_ERROR",
+      "error_type": "RuntimeError",
+      "message": "DefineWallDiaphragm: ETABS return code 1",
+      "cause": "NewBlank defines D1; repeated definition rejected",
+      "retained_successful_cases": 4
+    },
+    {
+      "attempt": 2,
+      "run": "outputs/current/single_wall_12_02",
+      "retry_of": "outputs/current/single_wall_12_01",
+      "change": "Use SL_WALL_D-prefixed diagnostic diaphragm names",
+      "status": "SUCCESS",
+      "etabs_cases": 10,
+      "opensees_cases": 12
+    }
+  ],
+  "preliminary_probe": "outputs/current/single_wall_native_probe_01 is a preliminary adapter check with input/result only; excluded from paired conclusions",
+  "engineering_feasibility": "NOT_EVALUATED"
+}

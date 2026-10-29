@@ -9,7 +9,7 @@ from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import ErrorRecord
 from .benchmark import build_and_analyze
 from .client import session
-from .contracts import ETABSRequest, CantileverSpec
+from .contracts import ETABSRequest, CantileverSpec, SingleWallSpec
 
 
 def main() -> int:
@@ -23,6 +23,9 @@ def main() -> int:
             print('STAGE build_and_analyze', flush=True)
             if isinstance(spec,CantileverSpec):
                 result = build_and_analyze(client, spec, directory)
+            elif isinstance(spec, SingleWallSpec):
+                from .wall_etabs import build_and_analyze as single_wall
+                result = single_wall(client, spec, directory)
             else:
                 from .residential import build_and_analyze as residential
                 result = residential(client,spec,directory,beam_theory=config.beam_theory,
