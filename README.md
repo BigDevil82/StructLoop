@@ -30,7 +30,7 @@ uv pip install --python .venv/Scripts/python.exe -r requirements.lock.txt --extr
 uv pip install --python .venv/Scripts/python.exe -e .
 ```
 
-如果本地工件尚未导入，运行一次（现有文件会使导入停止，防止覆盖）：
+如果本地所需文件尚未导入，运行一次（现有文件会使导入停止，防止覆盖）：
 
 ```powershell
 .venv/Scripts/python.exe -m scripts.import_local_assets
@@ -45,7 +45,7 @@ uv pip install --python .venv/Scripts/python.exe -e .
 默认工程测试案例为用户指定的 **residential_001**：
 `data/local/residential_001/architecture_preprocessed.dxf`，原文件为 `archi_comp.dxf`。
 来源、SHA256、类别及单位解释保存在 [configs/test_case.json](configs/test_case.json)。
-后续真实生成、优化与闭环测试使用此图；L17_101 仅保留历史迁移回归，toy_01 仅保留 mock 测试。
+后续布置生成、优化和完整流程测试使用此图；L17_101 仅用于核对移入代码前后的结果，toy_01 仅用于模拟数据测试。
 
 ```powershell
 .venv/Scripts/python.exe -m struct_agent.cli generate --seed 42 --run outputs/current/new_residential_generation
@@ -59,7 +59,7 @@ uv pip install --python .venv/Scripts/python.exe -e .
 
 目录必须是新的。保存 `manifest.json`、`room_graph.json`、`ratios.npy` 和 `layout.json`。
 已有房间图可直接调用 `RCGNNAdapter.generate()`；字段和单位见
-[公共数据契约](docs/data_contracts.md)。单一条件只生成一个确定性候选。
+[公共数据格式说明](docs/data_contracts.md)。单一条件只生成一个确定性候选。
 
 ## 固定布置参数优化
 
@@ -67,10 +67,10 @@ uv pip install --python .venv/Scripts/python.exe -e .
 .venv/Scripts/python.exe -m struct_agent.cli optimize --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/residential_12_story.json --seed 42 --budget-fea 20 --population 24 --generations 20 --run outputs/current/new_residential_optimization
 ```
 
-`reference_spec.json` **仅为迁移回归示例**，显式列出了旧入口的 28 层、2.9m 层高、
+`reference_spec.json` **仅为检查移入代码时使用的示例**，显式列出了旧入口的 28 层、2.9m 层高、
 120mm 板厚及材料/地震参数。正式项目条件、荷载与规范版本仍需工程师确认。
 上述命令采用获准用于诊断的12层条件，仍仅展示接口用法；当前布局含极短物理墙肢，会在真实优化前置检查处阻断。
-建模统一采用[最终配置](docs/final_model.md)，软件差异排查已结束；后续按结构受理与工程校核门槛推进。
+建模统一采用[最终配置](docs/final_model.md)，软件差异排查已结束；后续按建模前检查与工程校核要求推进。
 也可提供符合公共 Schema 的人工修改方案。
 `--rooms` 必须对应该建筑，CASINO 每次从实际墙线重新编码布局特征，禁止套用另一布置缓存。
 
@@ -86,13 +86,13 @@ OpenSees 日志、优化历史和结果。无 Git 时以源码哈希标识代码
 换布局或设计条件必须创建新会话；共享 `AnalysisService` 可继续使用同一全局 FEA 预算。
 
 CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推进并保存每段记录。
-需要在代际决策时使用后文 `agent_cli`。默认 `--device cpu` 用于可复现回归；
+需要在代际决策时使用后文 `agent_cli`。默认 `--device cpu` 用于重复运行结果的检查；
 可显式选择 `--device cuda`，但 GPU 推理不保证逐数值完全一致。
 不传 `--generations-per-step` 时一次执行，同样调用当前共用的生成引擎。
 
 每段写入 `optimization/steps/advance_*.json`，包括种群、历史、随机状态、校准样本、
 评价增量和错误；结束时写入 `history.json`、`summary.json`。当前仅支持**同进程、代际边界**续行，
-这些 JSON 是审计快照，不是可从磁盘加载的恢复点。部分代因预算/求解异常中断后终止，不能重试该会话。
+这些 JSON 是运行状态记录，不是可从磁盘加载的恢复点。部分代因预算/求解异常中断后终止，不能重试该会话。
 
 当前一代表示一个完成评价和排序的种群；没有被忽略的尾随种群。
 `advance(1)` 不等于一次 FEA，实际次数由种群、代理与缓存决定。
@@ -134,9 +134,8 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 .venv/Scripts/python.exe -m pytest -q tests/integration/test_real_adapters.py -m real --run-real
 ```
 
-最后一条是本机真实回归：RC-GNN 使用当前 residential_001 图纸；FEA 对照使用当前计算指纹的独立详细分析工件。
-需要已经生成的参考工件，准备步骤及命令见
-[进度记录](docs/progress.md)。普通测试默认跳过真实权重/求解器测试。
+最后一条会实际运行RC-GNN和OpenSees：前者检查当前建筑图的布置输出，后者将结构计算结果与之前保存的结果核对。
+所用输入和参考结果的路径见 [进度记录](docs/progress.md)。普通测试默认跳过需要模型权重或真实求解器的测试。
 
 ## Phase 4 决策与学校 LLM
 
@@ -150,14 +149,14 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 ```
 
 `outputs/archive/evidence_20261029.zip::phase4_real_llm_01/` 已完成“真实分析→LLM 再决策→再次真实分析”，
-5 次 FEA 均求解成功但结构不可行，预算耗尽后模型请求人工检查；仅作冒烟。
+5 次 FEA 均求解成功但结构不可行，预算耗尽后模型请求人工检查；仅作基本流程测试。
 用户已批准 `residential_001_symmetry_02` 作为本轮第二候选，批准绑定布局与设计条件哈希，
 不代表正式工程签审。后续真实跨布局结果见 [进度记录](docs/progress.md)。
 
 已补充可选构件级 FEA 诊断，可复算某条真实记录并保留控制构件、组合剪力及配筋消息：
 `.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --help`。
 已修正的内力组合、局部坐标、墙肢汇总与配筋检查继续保留，建模约定见 [最终配置](docs/final_model.md)。
-分析分段已按直墙肢汇总；当前12层回归由 `configs/real_fea_reference.json` 绑定，旧28层诊断已退役。
+分析分段已按直墙肢汇总；12层算例的输入和参考结果路径见 `configs/real_fea_reference.json`，旧28层记录不再作为当前计算依据。
 新生成 `residential_001_rcgnn_03` 保留短墙原类别并输出几何审查；未消解短墙时真实优化会前置阻断。
 真实优化默认直接 FEA；旧代理权重在与修正后的标签验证兼容前不参与筛选。
 
@@ -167,11 +166,11 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
   本次没有把 CAD 插件及整套骨架提取工程搬进来。原生 DWG/任意图层解析未实现。
 - 暂时沿用上游固定层高/板厚/分区材料口径；不支持的输入直接拒绝。
 - 默认筛选阈值在迁移生成案例上拒绝了本轮候选；这不证明候选一定不可行。
-  `--screening-threshold 0.0` 仅用于另行标记的调用链冒烟验证，不代表 CASINO 效率实验。
-- 实际求解冒烟方案均未通过结构校核。没有宣称获得工程可行解或证明论文研究假设。
+  `--screening-threshold 0.0` 仅用于另行标记的调用流程检查，不代表 CASINO 效率实验。
+- 基本流程测试中的实际求解方案均未通过结构校核。没有宣称获得工程可行解或证明论文研究假设。
 - 已接入真实 FEA 反馈和学校 LLM；审批文件只能来自受信任操作方，并绑定候选/条件/用途。
   从磁盘恢复及工程人工审批界面尚未实现；同进程会话和已获批候选可继续执行。
-- 论文 Ours 的决策收益机制、正式对比及消融尚待研究设计与实验，不以冒烟替代科学结论。
+- 论文 Ours 的决策收益机制、正式对比及消融尚待研究设计与实验，不以基本流程测试替代科学结论。
 
 
 ## 最终建模方案

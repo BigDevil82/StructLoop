@@ -1,12 +1,12 @@
 # PLAN.md — 住宅建筑结构智能设计 Agent：本地工程执行规范
 
 > 2026-10-30用户决定：软件差异排查结束，采用[最终建模配置](final_model.md)中的完整有梁MVLEM方案。
-> 剩余差异作为已接受模型偏差，不再校准；比对代码、测试与工件已直接删除。当前继续Phase 4，回到结构受理及优化/Agent工作。
+> 剩余差异作为已接受模型偏差，不再校准；比对代码、测试与运行文件已直接删除。当前继续Phase 4，回到建模前检查及优化/Agent工作。
 
 > 2026-10-28 用户执行规则更新：已发现的实现 bug 直接按正确逻辑修复，无需重复确认，不保留错误算法的旧版运行分支。
 > 仍须记录依据与验证、区分真实/mock，工程最终审查及未提供的工程条件独立处理。详见 AGENTS.md 第 7 条。
 
-> 状态：v0.1 / 探索性设计。本文是本地 Codex 的项目级执行契约，不是已经验证的论文结论。与 `RESEARCH_ROADMAP.md` 配合使用：前者管**怎么实现与验证**，后者管**为什么研究与如何演进**。  
+> 状态：v0.1 / 探索性设计。本文是本地 Codex 的项目执行说明，不是已经验证的论文结论。与 `RESEARCH_ROADMAP.md` 配合使用：前者管**怎么实现与验证**，后者管**为什么研究与如何演进**。
 > 优先级：**真实物理闭环 > 可复现实验 > Agent 决策研究 > DWG/报告等产品能力**。任何未核实的现有算法接口不得假定为事实。
 
 ## 1. 研究目标与问题数学定义
@@ -88,15 +88,15 @@ project_root/
 │   ├── integration/                 # adapters + workflow；mock 可在 CI 跑
 │   ├── regression/                  # 已知案例与真实求解结果快照
 │   └── fixtures/                    # 小图、小布局、mock FEA 响应
-├── outputs/                         # 每次运行独立目录：工件、日志、表格、图片
-└── docs/                            # 字段字典、模型契约审计、软件能力矩阵
+├── outputs/                         # 每次运行独立目录：运行文件、日志、表格、图片
+└── docs/                            # 字段字典、模型输入输出检查、软件能力矩阵
 ```
 
 **管理原则**：`data/raw` 与上游模型仓库保持只读；研究代码只通过 Adapter 调用它们。一次运行一个 `run_id`，将输入哈希、Git commit、配置快照、模型权重版本、软件版本、随机种子写入 `outputs/<run_id>/manifest.json`。大型权重和商业数据不进 Git。
 
 ## 3. 数据流与核心模块接口规范
 
-### 3.1 数据契约（先定交换格式，再写业务代码）
+### 3.1 数据格式说明（先定交换格式，再写业务代码）
 
 | 数据对象 | 建议文件 | 必需内容及形状 / 约束 |
 |---|---|---|
@@ -110,7 +110,7 @@ project_root/
 
 - **内部规范单位**：长度 `m`，力 `kN`，应力 `MPa`，材料体积 `m³`；金额明确币种。DWG常见 `mm` 与软件自有单位在适配边界转换，所有转换写测试。
 - **图 Batch**：单样本 `x:[N,F_R]`、`edge_index:[2,E]`；若模型依赖 PyG，则多图 `Batch.x:[ΣN,F_R]`、`Batch.edge_index:[2,ΣE]`、`Batch.batch:[ΣN]`。具体额外字段以现有 RC-GNN 为准；若不是 PyG 模型，Adapter 内转换，不强制修改上游。
-- **CASINO 输入**：遵守现有 FuseGNN/优化管线真实契约（房间图、布置统计、设计参数与设计条件）；`F_C` 和 $D$ 均从现有实现读取。不得凭空假定可跨布局复用在线局部校准器。**每个 `(layout_id, condition_id)` 使用隔离的校准缓冲区**。
+- **CASINO 输入**：遵守现有 FuseGNN/优化流程的实际输入输出格式（房间图、布置统计、设计参数与设计条件）；`F_C` 和 $D$ 均从现有实现读取。不得凭空假定可跨布局复用在线局部校准器。**每个 `(layout_id, condition_id)` 使用隔离的校准缓冲区**。
 - **FEA 语义**：`status∈{SUCCESS, MODEL_ERROR, SOLVER_ERROR, TIMEOUT, INVALID_RESULT}`；仅 `SUCCESS` 且必要检查齐全时可计算 `feasible`。预估/代理结果必须标为 `PREDICTED`，不能冒充真实 FEA。
 - **输入安全**：`*.pt`/checkpoint 只加载受信任的本地文件；不信任的外部文件不做任意反序列化或执行。所有 Agent 生成的脚本必须经过许可清单和受控执行环境。
 
@@ -148,7 +148,7 @@ class DecisionPolicy(Protocol):
     # 无权直接调用 FEA、改数据库或越过人工确认；仅返回决策提案。
 ```
 
-**编排责任**：`DesignEnv` 验证决策合法性、消耗预算、执行审批门控并更新状态；`WorkflowRunner` 串联上述五个模块，支持暂停/恢复和失败重试。`ReportingService` 读取不可变工件生成报告，不参与力学计算。
+**编排责任**：`DesignEnv` 验证决策合法性、消耗预算、执行审批门控并更新状态；`WorkflowRunner` 串联上述五个模块，支持暂停/恢复和失败重试。`ReportingService` 读取保存后不覆盖的运行文件生成报告，不参与力学计算。
 
 ### 3.3 单次状态转移与数据流
 
@@ -189,7 +189,7 @@ ProjectSpec + RoomGraph
 
 ### Phase 3 — 真实 RC-GNN / CASINO / FEA 适配与最小实证闭环
 
-- **任务**：实现 `adapters/{rcgnn,casino}.py`、`adapters/fea/real.py`、`services/{layout,optimization,analysis}.py`；复用上游模型与现有分析程序，建立一套**已知正确的单算例回归基准**。优化器和CASINO的FEA调用统一穿过 `AnalysisService`。
+- **任务**：实现 `adapters/{rcgnn,casino}.py`、`adapters/fea/real.py`、`services/{layout,optimization,analysis}.py`；复用上游模型与现有分析程序，保存一份**已验证算例的参考计算结果**，供后续检查改动是否影响计算。优化器和CASINO的FEA调用统一穿过 `AnalysisService`。
 - **验证命令**：`python -m pytest -q tests/integration/test_real_adapters.py -m real`；`python -m struct_agent.cli run-case --case data/processed/case_001 --solver real --policy scripted --budget-fea 20`。
 - **通过标准**：在具备权重/求解器的机器上，RC-GNN输出能转换为合法候选，CASINO调用真实FEA并取得有效校核数据；存在**一次真实评价后的明确续作（继续优化或更换预置布局）与二次真实评价**；关键结构计算与上游已验证脚本一致。若未接入真实FEA，则 **Phase 3 未完成**。
 - **待确认**：`[TODO: 待确认：真实 solver 首选、许可证/接口、一次求解耗时、FEA覆盖的校核项、优化预算最小规模]`。
@@ -270,4 +270,4 @@ human_review:
 
 ---
 
-**当前任务**：继续Phase 4的结构受理、参数优化与Agent验证；使用已选定的MVLEM建模器，不重启已结束的软件差异排查。
+**当前任务**：继续Phase 4的建模前检查、参数优化与Agent验证；使用已选定的MVLEM建模器，不重启已结束的软件差异排查。

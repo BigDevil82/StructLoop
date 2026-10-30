@@ -1,6 +1,6 @@
 # 上游接口审计
 
-只读来源：`E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf`。静态存在性不等于运行验证。
+原项目路径：`E:/Common/Desktop/Research/deepLearning/codes/Png2Dxf`。只读取、不修改该目录；找到文件不代表相关功能已运行通过。
 
 | 能力 | 状态 | 证据 | SHA256 |
 |---|---|---|---|
@@ -19,7 +19,7 @@
 | FEA modeling / analysis | KNOWN | `src/shearwall_modeling/parametric/analysis.py` | `fe2a9f9e0d94d62d700dbcc82eaa6907b3f7ee5ef76afeae21d2e5c6383e7365` |
 | FEA topology schema | KNOWN | `src/shearwall_modeling/core/domain.py` | `5153f9319d6863e2e38b51b6b4b5bc29859aab53a2eda2d525d225b6afffa3cf` |
 
-## 已核实契约
+## 已核实的输入输出要求
 
 - RC-GNN：float32 x[N,25]、edge_attr[E,8]；int64 edge_index[2,E]；condition[1,3]。输出 probability/ratio[N,16]。预处理原生平面坐标为 mm；公共几何为 m。
 - 单一条件、eval 模式是确定性预测，不能把重复调用当成不同候选。房间边顺序/掩码必须保留上游编码。
@@ -43,7 +43,7 @@
   墙配筋只检查长度 >0.5 m 的墙，而 ULS 检查全部墙。未修改上游算法或排除失败检查。
 - 静力内力保留符号，但 ULS 组合/包络按无符号输入假设实现；实测出现全负剪力被截为零及空控制组合。
   此口径与配筋提取器的绝对值包络不同。用户已授权直接修复，当前使用带符号组合、按对应限值利用率选控制包络；
-  不重标注历史结果。几何短段及漏检已修正，当前行为见 `docs/final_model.md` 与 `docs/final_model.md`。
+  不修改历史结果的标记。几何短段及漏检已修正，当前建模说明见 `docs/final_model.md`。
 
 ## 资产存在性
 
@@ -54,7 +54,7 @@
 
 ## 待确认与验收边界
 
-- [TODO: 待确认] RC-GNN 五折模型及 CASINO 默认工件是否为论文最终指定版本；本次只按现有默认入口复用并记录哈希。
+- [TODO: 待确认] RC-GNN 五折模型及 CASINO 默认模型文件是否为论文最终指定版本；本次只按现有默认入口复用并记录哈希。
 - 默认工程图已由用户指定为 `archi_comp.dxf`，本地命名为 `residential_001/architecture_preprocessed.dxf`。
   旧 README 对此图采用 `category=2`；本项目配置见 `configs/test_case.json`。
 - 图纸头单位 m 与坐标/旧处理链 mm 不一致；显式按 mm 解释并保留原文件哈希。
@@ -65,9 +65,9 @@
   当前工程图的输出原始墙线 WKB 与上游逐项一致；上游源文件 SHA256：
   `c7b0f9c4d893a0a7cc814463560c8da7b12f9e9fda60c48bcde0581a13018423`。
   最小实现要求显式房间多边形，未迁移上游“缺房间时回退 infill_walls”的分支；不支持时拒绝。
-  候选 `residential_001_symmetry_02` 已获用户批准仅用于本轮跨布局冒烟。
-- [TODO: 待确认] 此工程的层数、荷载、规范版本及真实已验证 FEA 回归基准。图纸确认不等于工程条件确认。
-- 2026-10-28 用户明确授权沿用现有 28 层等条件，仅作冒烟；这不消除正式工程条件待确认项。
+  候选 `residential_001_symmetry_02` 已获用户批准仅用于本轮切换布置方案的流程测试。
+- [TODO: 待确认] 此工程的正式层数、荷载、规范版本，以及用于检查工程计算是否正确的参考结果。图纸确认不等于工程条件确认。
+- 2026-10-28 用户明确授权沿用现有 28 层等条件，仅作基本流程测试；这不消除正式工程条件待确认项。
 - DWG 原生读取、任意图层自动语义识别及 Agent 决策不属于本轮最小代码迁移。
 - UNKNOWN：模型跨布局泛化有效性；需要实验验证，不由迁移推断。
 - 2026-10-29发现并修正材料估算中的密度/价格换算、梁箍筋周长和墙边缘筋纵向长度错误。
@@ -75,5 +75,5 @@
 - 后续建模语义修正：分析网格与直墙肢分离，保留所有FE节点/单元，在每阶振型内先汇总墙肢内力。
   撤销短墙转梁；新生成图保留原类别并审查，真实GA拒绝尚未处理的极短物理墙肢。见 `docs/final_model.md`。
 - 最终建模采用完整有梁MVLEM方案，关键设置与已接受的软件差异统一见 `docs/final_model.md`。
-  12层同实现回归由 `configs/real_fea_reference.json` 绑定，已修正的物理逻辑继续保留。
-  商业软件排查适配器与工件已按用户决定删除，不再作为后续任务；本次未训练或更新权重。
+  12层算例的输入和参考结果路径见 `configs/real_fea_reference.json`，已修正的物理计算逻辑继续保留。
+  商业软件排查适配器与运行文件已按用户决定删除，不再作为后续任务；本次未训练或更新权重。

@@ -25,7 +25,7 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 首次真实API探针使用明确标记的合成状态；该开发探针已清理，历史记录见Git提交ef2c915。实际LLM/FEA轨迹保留于 `outputs/archive/evidence_20261029.zip::phase4_real_llm_01/`。
 模型合法返回人工检查，但把 `paused` 与 `engineering_review=PENDING` 误解为续作审批缺失。
 提示词已明确：前者是正常代际边界；后者指最终工程交付审查，不阻止已授权的优化。
-该问题及提示修正保存在Git历史中，原探针工件本次已清理。
+该问题及提示修正保存在Git历史中，原试算文件本次已清理。
 
 ## 真实运行
 
@@ -33,12 +33,12 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 .venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/residential_12_story.json --run outputs/current/new_agent_run --case-id residential_001 --purpose smoke_only --policy llm --seed 42 --budget-fea 5 --population 3 --generations 2
 ```
 
-上例使用当前12层输入；极短物理墙肢尚未消解时会在前置检查处阻断，不应切换旧布局绕过门槛。
-建模配置已固定，软件差异排查结束，见 `docs/final_model.md`。此处展示接口，历史调用链冒烟不代表工程设计通过。
+上例使用当前12层输入；极短物理墙肢尚未消解时会在前置检查处阻断，不应切换旧布局跳过检查。
+建模配置已固定，软件差异排查结束，见 `docs/final_model.md`。此处展示接口，历史调用流程测试不代表工程设计通过。
 
 `--policy fixed|rules|llm` 使用相同评价服务、候选池与 CASINO 配置。
 `--layout` 可重复指定有顺序的预置候选池；当前默认工程图只有一个既有 RC-GNN 方案。
-`--purpose` 强制说明用途；旧28层条件只获准冒烟，后续另获准12层用于软件诊断；均非正式工程条件确认。
+`--purpose` 强制说明用途；旧28层条件只获准基本流程测试，后续另获准12层用于软件诊断；均非正式工程条件确认。
 早期筛选阈值0用于暴露真实调用链，不表示CASINO效率设置；当前真实优化默认禁用未验证的代理权重。
 一次决策推进一代，可能产生多次 FEA；共享服务在每次实际求解前检查总预算，含失败尝试。
 
@@ -54,7 +54,7 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 批准必须同时匹配布局、设计条件规范 JSON 哈希及用途，在实际切换提议后才应用，并记录事件。
 没有匹配批准时 CLI 在待审批处退出；**不支持从磁盘恢复**，交互界面属下一阶段。
 
-工件：`manifest.json`、`events/`、`analyses/`、`solver_logs/`、`sessions/`、
+运行文件：`manifest.json`、`events/`、`analyses/`、`solver_logs/`、`sessions/`、
 `api/`、`decisions/`、`summary.json`。事件记录动作前后状态、实际 FEA 增量和目标变化。
 输出目录和各 JSON 不可覆盖。LLM 决策可用 `ReplayPolicy` 离线回放，要求状态哈希完全一致；
 它是决策回放，不是物理会话的磁盘恢复。
@@ -70,15 +70,15 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 
 比较器要求案例、候选顺序、种子、预算、停止上限、优化配置、软件与代码哈希一致；
 策略名和 LLM 配置是允许差异。失败案例保留，无可行解的成本为 `null`，不填零或代理估值。
-相同预算上限不要求各策略实际耗尽预算。开发过程中代码版本不同的冒烟不能混作严格对照。
+相同预算上限不要求各策略实际耗尽预算。开发过程中代码版本不同的基本流程测试不能混作严格对照。
 
 普通单元测试使用 stub；显式 FuseGNN 集成测试使用真实权重但合成 FEA，标记 `mock`。
-真正工程证据只来自 `fidelity=full` 的 OpenSees 记录。冒烟仅验证调用与决策路径，不证明工程可行或策略优越。
+真正工程证据只来自 `fidelity=full` 的 OpenSees 记录。基本流程测试仅验证调用与决策路径，不证明工程可行或策略优越。
 
 ## 尚未完成的研究验收
 
-- 新图正式工程条件及规范口径尚待工程师确定；现有条件仅获准冒烟。
-- 用户已批准 `outputs/archive/evidence_20261029.zip::residential_001_symmetry_02/` 的上游 union 对称化候选仅作冒烟，
+- 新图正式工程条件及规范口径尚待工程师确定；现有条件仅获准基本流程测试。
+- 用户已批准 `outputs/archive/evidence_20261029.zip::residential_001_symmetry_02/` 的上游 union 对称化候选仅作基本流程测试，
   批准文件为该目录 `user_approval.json`；真实跨布局结果和验证命令见 `docs/progress.md`。
 - 论文 Ours 的动作收益模型、对比假设、消融口径与多种子实验尚未定义并验证。
 - 人工审批界面、磁盘恢复、DWG/报告输出分别按后续阶段推进。
