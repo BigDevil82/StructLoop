@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import math
 
 from ..builders.base import WallStoryElementUnit
-from ..core.domain import PlanMember, Point2D
+from ..core.domain import BeamMember, PlanMember, Point2D
 
 
 @dataclass(frozen=True)
@@ -97,4 +97,52 @@ def assemble_wall_units(units: list[WallStoryElementUnit]) -> list[WallStoryElem
                 node_coords={n: xyz for u in parts for n, xyz in u.node_coords.items()},
                 member=pier.member, thickness=first.thickness, story_height=first.story_height,
                 source_wall_ids=pier.source_ids))
+    return result
+
+
+@dataclass(frozen=True)
+class BeamSpan:
+    source_ids: tuple[int, ...]
+    start: Point2D
+    end: Point2D
+    coupling: bool
+
+    @property
+    def length(self) -> float:
+        return self.start.distance_to(self.end)
+
+
+def beam_spans(beams: list[BeamMember], walls: list[PlanMember]) -> list[BeamSpan]:
+    """Physical collinear spans; a wall is a support, an intersecting beam is not.
+
+    Global XY metres. Keep all FE segments and branch nodes. Coupling requires
+    walls at both ends and at least one wall within 30 degrees of the beam axis.
+    """
+    def supports(point: Point2D) -> list[PlanMember]:
+        result = []
+        for wall in walls:
+            dx, dy = wall.end.x-wall.start.x, wall.end.y-wall.start.y
+            px, py = point.x-wall.start.x, point.y-wall.start.y
+            along = (px*dx+py*dy)/wall.length**2
+            if -1e-7 <= along <= 1+1e-7 and abs(px*dy-py*dx)/wall.length <= 1e-6:
+                result.append(wall)
+        return result
+    # Reuse collinear grouping, splitting a connected chain at actual wall supports.
+    by_id = {b.m_id: b for b in beams}
+    result = []
+    for chain in wall_piers(beams):
+        dx, dy = chain.end.x-chain.start.x, chain.end.y-chain.start.y
+        ordered = sorted((by_id[i] for i in chain.source_ids), key=lambda b:
+            min((p.x-chain.start.x)*dx+(p.y-chain.start.y)*dy for p in (b.start,b.end)))
+        parts = []
+        start = chain.start
+        for beam in ordered:
+            parts.append(beam)
+            end = max((beam.start,beam.end), key=lambda p:(p.x-chain.start.x)*dx+(p.y-chain.start.y)*dy)
+            if supports(end) or beam is ordered[-1]:
+                left, right = supports(start), supports(end)
+                aligned = any(abs(dx*(w.end.x-w.start.x)+dy*(w.end.y-w.start.y)) /
+                    (chain.member.length*w.length) >= math.cos(math.pi/6)-1e-8 for w in left+right)
+                result.append(BeamSpan(tuple(b.m_id for b in parts),start,end,bool(left and right and aligned)))
+                start, parts = end, []
     return result

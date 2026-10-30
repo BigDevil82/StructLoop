@@ -9,8 +9,9 @@ from .base import Contract
 class NativeResponse(Contract):
     """Ratios dimensionless, periods s, mass t, material quantities kg.
 
-    The stiffness flag covers both adjacent/average-storey rules; only the
-    adjacent minimum is exposed by upstream. Preserve the aggregate flag.
+    min_stiffness_ratio/0.7 is the minimum margin of the adjacent (0.7)
+    and upper-three-story-average (0.8) rules. Zero modal metadata means
+    unavailable in an old record, never evidence of mass participation.
     This is the native check scope, not a declaration of full code compliance.
     """
     converged: Literal[True]
@@ -48,3 +49,6 @@ class NativeResponse(Contract):
     wall_shear_passed: bool
     beam_shear_passed: bool
     error: Literal[""]
+    mode_count: int = Field(default=0,ge=0)
+    mass_participation_x_pct: float = Field(default=0.,ge=0.,le=100.000001)
+    mass_participation_y_pct: float = Field(default=0.,ge=0.,le=100.000001)

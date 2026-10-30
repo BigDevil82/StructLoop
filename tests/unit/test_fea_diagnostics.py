@@ -1,6 +1,7 @@
 """Synthetic detailed records validate diagnostics only, never physical results."""
 from dataclasses import asdict
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -20,26 +21,33 @@ def test_shared_summary_matches_explicit_expected_values(empty: bool, ratio: flo
     metric = NS(axial_ratio=.4, axial_ratio_limit=.6, shear_pressure_ratio=.3, shear_pressure_ratio_limit=.15)
     # Equal utilization with a different ratio/limit: native last-item tie rule.
     tied = NS(axial_ratio=.2, axial_ratio_limit=.3, shear_pressure_ratio=.4, shear_pressure_ratio_limit=.2)
-    analysis = NS(modal_summary=NS(periods=[1., .9, .8, .7, .6, .5], period_ratio=ratio),
+    analysis = NS(modal_summary=NS(periods=[1., .9, .8, .7, .6, .5], period_ratio=ratio,mass_participation_x_pct=95.,mass_participation_y_pct=96.),
         wall_uls_metrics=[] if empty else [metric, tied], beam_uls_metrics=[] if empty else [metric, tied])
     build = NS(floor_load_masses=[1000., 1000.], floor_self_masses=[10., 10.])
     design = NS(is_passed=False, failed_beams=[1, 2], failed_walls=[], total_concrete_kg=500., total_steel_kg=50.)
     overall = NS(is_passed=False, is_torsion_passed=True, is_shear_weight_passed=True, is_stiffness_passed=True,
         is_interstory_drift_passed=True, is_period_ratio_passed=ratio is not None,
         is_wall_axial_passed=True, is_wall_shear_pressure_passed=False, is_beam_shear_pressure_passed=False)
-    directions = {"X": NS(metrics=[NS(torsion_ratio=1., shear_weight_ratio=.1, stiffness_ratio_adjacent=.9)], max_interstory_drift_ratio=.0005)}
+    directions = {"X": NS(metrics=[NS(torsion_ratio=1., shear_weight_ratio=.1, stiffness_ratio_adjacent=.9,stiffness_ratio_average=1.2)], max_interstory_drift_ratio=.0005)}
+    if empty:
+        with pytest.raises(ValueError,match='Missing member checks'):
+            summarize_native(build,analysis,overall,directions,design)
+        return
     actual = asdict(summarize_native(build, analysis, overall, directions, design))
+    if ratio is None:
+        assert math.isnan(actual['period_ratio'])
+        actual['period_ratio'] = None
     assert actual == dict(converged=True, feasible=False, design_passed=False,
         design_failed_beam_count=2, design_failed_wall_count=0, material_concrete_kg=500., material_steel_kg=50.,
         mass_total_t=2.02, T1=1., T2=.9, T3=.8, T4=.7, T5=.6, T6=.5,
-        period_ratio=1.25 if ratio is None else ratio, period_ratio_available=ratio is not None,
+        period_ratio=ratio, period_ratio_available=ratio is not None,
         torsion_ratio=1., min_shear_weight_ratio=.1, max_drift_ratio=.0005, min_stiffness_ratio=.9,
         max_wall_axial_ratio=0. if empty else .2, max_wall_axial_limit=1. if empty else .3,
         max_wall_shear_ratio=0. if empty else .4, max_wall_shear_limit=1. if empty else .2,
         max_beam_shear_ratio=0. if empty else .4, max_beam_shear_limit=1. if empty else .2,
         torsion_passed=True, shear_weight_passed=True, stiffness_passed=True, drift_passed=True,
         period_ratio_passed=ratio is not None, wall_axial_passed=True, wall_shear_passed=False,
-        beam_shear_passed=False, error='')
+        beam_shear_passed=False, error='',mode_count=6,mass_participation_x_pct=95.,mass_participation_y_pct=96.)
 
 
 def evidence(*, negative_wall: bool = False) -> tuple[MemberDiagnostic, ...]:
@@ -58,12 +66,15 @@ def evidence(*, negative_wall: bool = False) -> tuple[MemberDiagnostic, ...]:
     def metric(native_id: int, length: float, ratio: float, wall: bool) -> NS:
         return NS(**({"wall_id": native_id} if wall else {"beam_id": native_id}), story=1, length=length,
             shear_pressure_ratio=ratio, shear_pressure_ratio_limit=.15, shear_control_combo="EQ",
-            shear_control_combo_type="Seismic", is_shear_pressure_passed=False)
+            shear_control_combo_type="Seismic", is_shear_pressure_passed=False,
+            effective_depth_m=.001 if wall else .5,physical_span_m=length,coupling=False,
+            shear_checks={'EQ':(ratio*14.3e6*.2*(.001 if wall else .5),.15)})
     analysis = NS(wall_uls_metrics=[metric(0, .001, 5., True)], beam_uls_metrics=[metric(1, 2., .3, False)],
         wall_forces_by_combo={"EQ": {(0, 1): (0., 0., 5.*14.3e6*.2*.001)}},
         beam_forces_by_combo={"EQ": {(1, 1): (0., 0., .3*14.3e6*.2*.5)}})
     if negative_wall:
         analysis.wall_forces_by_combo["EQ"][0, 1] = (0., 0., -14300.)
+        analysis.wall_uls_metrics[0].shear_checks['EQ'] = (-14300.,.15)
     design = NS(wall_results=[NS(wall_id=0, story=1, is_passed=False, messages=["section_insufficient"])],
         beam_results=[NS(beam_id=1, story=1, is_passed=False, messages=["beam_shear_section_insufficient"])])
     return collect_members(layout, context, analysis, design, beta_c=1., combination_types={"EQ": "Seismic"})
@@ -94,6 +105,14 @@ def test_negative_shear_is_captured_as_absolute_envelope() -> None:
     assert wall.shear_n == 14300. and wall.shear_ratio == 5. and not wall.shear_passed
     assert wall.control_combo == "EQ"
     assert wall.combo_shear_n == {"EQ": -14300.} and wall.absolute_combo_shear_n == 14300.
+
+
+def test_design_shear_is_distinct_from_original_combination_evidence() -> None:
+    row=evidence()[0].model_dump()
+    original=row['combo_shear_n']['EQ']
+    row.update(shear_n=2*original,shear_ratio=10.,combo_design_shear_n={'EQ':2*original})
+    result=MemberDiagnostic.model_validate_json(json.dumps(row))
+    assert result.combo_shear_n['EQ']==original and result.shear_n==2*original
 
 
 def test_replay_comparison_retains_missing_fields_and_failure_flags() -> None:

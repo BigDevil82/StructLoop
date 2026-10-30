@@ -19,6 +19,9 @@ class MemberDiagnostic(Contract):
     length_m: float = Field(gt=0.)
     width_m: float = Field(gt=0.)
     depth_m: float = Field(gt=0.)
+    effective_depth_m: float = Field(gt=0.)
+    physical_span_m: float | None = Field(default=None,gt=0.)
+    coupling: bool | None = None
     concrete_grade: str
     fc_pa: float = Field(gt=0.)
     beta_c: float = Field(gt=0.)
@@ -29,6 +32,7 @@ class MemberDiagnostic(Contract):
     control_combo: str
     control_combo_type: Literal["Seismic", "NonSeismic"]
     combo_shear_n: dict[str, float]
+    combo_design_shear_n: dict[str, float]
     combo_shear_limits: dict[str, float]
     shear_passed: bool
     reinforcement_checked: bool
@@ -54,11 +58,11 @@ class MemberDiagnostic(Contract):
             raise ValueError("Absent reinforcement check must have unknown pass status")
         if self.control_combo not in self.combo_shear_n:
             raise ValueError("Control combination missing from force data")
-        if self.combo_shear_n.keys() != self.combo_shear_limits.keys() or any(v <= 0 for v in self.combo_shear_limits.values()):
+        if self.combo_shear_n.keys() != self.combo_shear_limits.keys() or self.combo_shear_n.keys()!=self.combo_design_shear_n.keys() or any(v <= 0 for v in self.combo_shear_limits.values()):
             raise ValueError("Each combination requires its own positive shear limit")
-        if self.shear_limit != self.combo_shear_limits[self.control_combo] or not math.isclose(self.shear_n, abs(self.combo_shear_n[self.control_combo]), rel_tol=1e-9, abs_tol=1e-8):
+        if self.shear_limit != self.combo_shear_limits[self.control_combo] or not math.isclose(self.shear_n, abs(self.combo_design_shear_n[self.control_combo]), rel_tol=1e-9, abs_tol=1e-8):
             raise ValueError("Selected shear and limit must belong to the controlling combination")
-        worst = max(abs(v)/self.denominator_n/self.combo_shear_limits[k] for k,v in self.combo_shear_n.items())
+        worst = max(abs(v)/self.denominator_n/self.combo_shear_limits[k] for k,v in self.combo_design_shear_n.items())
         if not math.isclose(self.utilization, worst, rel_tol=1e-9, abs_tol=1e-8):
             raise ValueError("Selected combination must govern utilization across all limits")
         return self

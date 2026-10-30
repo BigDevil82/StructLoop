@@ -1,4 +1,4 @@
-from time import time
+import math
 from typing import Any
 import openseespy.opensees as ops
 from ..builders.base import AnalysisModelContext
@@ -37,6 +37,12 @@ class ResponseSpectrumAnalyzer:
         return ResponseSpectrumCaseResult(eigen_values=eigen_values, modal_periods=modal_periods, modal_summary=modal_summary, story_weights=story_weights, direction_responses=direction_responses, seismic_beam_forces_by_dir=beam_forces_by_dir, seismic_wall_forces_by_dir=wall_forces_by_dir)
 
     def extract_modal_summary(self, modal_periods: list[float], modal_props: dict[str, Any]) -> ModalSummary:
+        for key in ('partiMassRatiosMX','partiMassRatiosMY','partiMassRatiosRMZ'):
+            ratios = modal_props[key]
+            if len(ratios)!=len(modal_periods) or any(not math.isfinite(float(v)) or v<0 for v in ratios):
+                raise ValueError(f'Invalid modal participation ratios: {key}')
+        if any(sum(modal_props[key])<90. for key in ('partiMassRatiosMX','partiMassRatiosMY')):
+            raise ValueError('Fewer than 90 percent participating mass; increase the number of modes')
         self.context.logger.info('\n[校核器] 正在根据模态参与质量比识别主导模态...')
         translational_mode_index, torsional_mode_index = identify_dominant_modes(modal_props)
         translational_period = modal_periods[translational_mode_index - 1] if translational_mode_index is not None and translational_mode_index - 1 < len(modal_periods) else None
@@ -44,7 +50,8 @@ class ResponseSpectrumAnalyzer:
         period_ratio = None
         if translational_period and torsional_period:
             period_ratio = torsional_period / translational_period
-        return ModalSummary(periods=modal_periods, translational_mode_index=translational_mode_index, translational_period=translational_period, torsional_mode_index=torsional_mode_index, torsional_period=torsional_period, period_ratio=period_ratio)
+        return ModalSummary(periods=modal_periods, translational_mode_index=translational_mode_index, translational_period=translational_period, torsional_mode_index=torsional_mode_index, torsional_period=torsional_period, period_ratio=period_ratio,
+            mass_participation_x_pct=sum(modal_props['partiMassRatiosMX']),mass_participation_y_pct=sum(modal_props['partiMassRatiosMY']))
 
     def compute_story_weights(self) -> list[float]:
         story_weights = [0.0] * self.context.num_stories
@@ -104,10 +111,10 @@ class ResponseSpectrumAnalyzer:
         for story_index, metric in enumerate(metrics):
             current_stiffness = stiffness_values[story_index]
             next_stiffness = stiffness_values[story_index + 1] if story_index < len(metrics) - 1 else current_stiffness
-            upper_stiffness = [stiffness_values[story_index + offset] for offset in range(1, 4) if story_index + offset < len(metrics)]
-            average_upper_stiffness = sum(upper_stiffness) / len(upper_stiffness) if upper_stiffness else current_stiffness
-            metric.stiffness_ratio_adjacent = current_stiffness / next_stiffness if next_stiffness > 1e-09 else 1.0
-            metric.stiffness_ratio_average = current_stiffness / average_upper_stiffness if average_upper_stiffness > 1e-09 else 1.0
+            upper_stiffness = stiffness_values[story_index+1:story_index+4]
+            metric.stiffness_ratio_adjacent = current_stiffness / next_stiffness if next_stiffness > 0 else 0.
+            # The three-story condition applies only where three upper stories exist.
+            metric.stiffness_ratio_average = current_stiffness/(sum(upper_stiffness)/3) if len(upper_stiffness)==3 and min(upper_stiffness)>0 else 1.
 
     def run_modal_case(self) -> tuple[list[float], list[float], ModalSummary]:
         ops.constraints('Transformation')
@@ -117,20 +124,30 @@ class ResponseSpectrumAnalyzer:
         ops.algorithm('Linear')
         ops.integrator('LoadControl', 0.0)
         ops.analysis('Static')
-        num_modes_required = min(self.context.config.num_modes, self.context.num_stories * 2)
-        self.context.logger.info(f'\n[校核器] 正在提取 {num_modes_required} 阶特征值 (UmfPack)...')
-        start = time()
-        eigen_values = ops.eigen('-genBandArpack', num_modes_required)
-        end = time()
-        self.context.logger.info(f'Eigenvalue extraction completed in {end - start:.2f} seconds.')
+        # Three inertial DOFs per rigid floor; ARPACK requires fewer modes than
+        # the mass rank. More modes are a convergence check, not a model variant.
+        maximum_modes = self.context.num_stories*3-1
+        num_modes_required = min(self.context.config.num_modes,maximum_modes)
+        while True:
+            self.context.logger.info(f'提取 {num_modes_required} 阶振型并检查参与质量')
+            eigen_values = ops.eigen('-genBandArpack',num_modes_required)
+            returned = ops.modalProperties('-return')
+            if not isinstance(returned,dict):
+                raise RuntimeError('modalProperties did not return modal participation data')
+            if min(sum(returned[key]) for key in ('partiMassRatiosMX','partiMassRatiosMY'))>=90.:
+                break
+            if num_modes_required==maximum_modes:
+                raise ValueError('Fewer than 90 percent participating mass at maximum extractable modes')
+            num_modes_required = min(maximum_modes,num_modes_required+3)
         if isinstance(eigen_values, (int, float)):
             eigen_values = [float(eigen_values)]
         else:
-            eigen_values = [float(value) for value in eigen_values if float(value) > 1e-12]
-        returned = ops.modalProperties('-return')
-        if not isinstance(returned, dict):
-            raise RuntimeError("modalProperties('-return') 未返回 dict，无法基于质量参与系数识别主导模态")
+            eigen_values = [float(value) for value in eigen_values]
+        if not eigen_values or any(not math.isfinite(v) or v <= 1e-12 for v in eigen_values):
+            raise ValueError('Invalid/nonpositive eigenvalue; possible mechanism')
         modal_periods = modal_periods_from_eigenvalues(eigen_values)
+        if min(modal_periods)<min(self.context.config.seismic.periods) or max(modal_periods)>max(self.context.config.seismic.periods):
+            raise ValueError('Modal period outside the provided response spectrum')
         self.context.logger.info(f'Modal periods (s): {[round(period, 4) for period in modal_periods]}')
         return (eigen_values, modal_periods, self.extract_modal_summary(modal_periods, returned))
 
@@ -149,11 +166,25 @@ class ResponseSpectrumAnalyzer:
             center_drift = abs(self._combine(modal_drift_center[story_index], eigen_values))
             corner_drifts = [abs(self._combine(modal_drift_corners[corner_index][story_index], eigen_values)) for corner_index in range(4)]
             drift_max = max(corner_drifts)
-            drift_min = min(corner_drifts)
-            drift_avg = 0.5 * (drift_max + drift_min)
-            torsion_ratio = drift_max / drift_avg if drift_avg > 1e-09 else 1.0
+            # Average signed modal end displacements BEFORE CQC. Averaging CQC
+            # peaks loses phase and understates torsion when the ends oppose.
+            average_modes = [sum(modal_drift_corners[c][story_index][m] for c in range(4))/4
+                             for m in range(len(eigen_values))]
+            drift_avg = self._combine(average_modes,eigen_values)
+            if drift_avg <= 1e-15 and drift_max > 1e-15:
+                raise ValueError(f'Zero average drift with nonzero torsion at story {story_index+1}')
+            torsion_ratio = drift_max / drift_avg if drift_avg > 0 else 1.
+            # Check floor displacement as well as interstory displacement.
+            floor_modes = [[sum(modal_drift_corners[c][s][m]*self.context.story_heights[s]
+                            for s in range(story_index+1)) for m in range(len(eigen_values))] for c in range(4)]
+            floor_max = max(self._combine(values,eigen_values) for values in floor_modes)
+            floor_average = self._combine([sum(v[m] for v in floor_modes)/4 for m in range(len(eigen_values))],eigen_values)
+            if floor_average<=1e-15 and floor_max>1e-15:
+                raise ValueError(f'Zero average displacement with nonzero torsion at story {story_index+1}')
+            torsion_ratio = max(torsion_ratio,floor_max/floor_average if floor_average>0 else 1.)
             shear_weight_ratio = story_shear / story_weights[story_index] if story_weights[story_index] > 1e-09 else 0.0
-            stiffness = story_shear / center_drift if center_drift > 1e-09 else 0.0
+            displacement_m = center_drift*self.context.story_heights[story_index]
+            stiffness = story_shear / displacement_m if displacement_m > 0 else 0.
             stiffness_values[story_index] = stiffness
             metrics.append(StoryMetric(story=story_index + 1, drift_max=drift_max, drift_avg=drift_avg, drift_center=center_drift, torsion_ratio=torsion_ratio, shear_weight_ratio=shear_weight_ratio, stiffness_k=stiffness, stiffness_ratio_adjacent=1.0, stiffness_ratio_average=1.0))
         self._update_story_stiffness_ratios(metrics, stiffness_values)

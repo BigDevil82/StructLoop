@@ -1,4 +1,6 @@
 import logging
+import math
+from dataclasses import fields
 from ..builders.base import AnalysisModelContext
 from ..core.config import ModelConfig
 from ..core.constants import MIN_SHEAR_WEIGHT_RATIO_BY_INTENSITY
@@ -31,6 +33,7 @@ class SeismicEvaluationPipeline:
     """Coordinate modal response extraction and code checks."""
 
     def __init__(self, config: ModelConfig):
+        self.story_count = config.num_stories
         shear_weight_checker = ShearWeightRatioChecker.from_intensity(config.seismic.intensity)
         self.direction_checkers: list[DirectionChecker] = [TorsionChecker(), shear_weight_checker, StiffnessChecker(), InterstoryDriftChecker()]
         self.period_ratio_checker = PeriodRatioChecker()
@@ -38,12 +41,31 @@ class SeismicEvaluationPipeline:
         self.beam_shear_checker = BeamShearPressureChecker()
 
     def _evaluate_direction(self, response: DirectionResponse) -> DirectionCheckResult:
+        if [m.story for m in response.metrics] != list(range(1,self.story_count+1)):
+            raise ValueError('Missing/duplicate/out-of-order story results')
+        if any(not math.isfinite(getattr(m,f.name)) or getattr(m,f.name)<0
+               for m in response.metrics for f in fields(m)):
+            raise ValueError('Nonfinite/negative story check metric')
         result = init_direction_check_result(response)
         for checker in self.direction_checkers:
             checker.apply(response, result)
         return result
 
     def evaluate(self, anysis_result: AnalysisResult) -> tuple[OverallCheckResult, dict[str, DirectionCheckResult]]:
+        for metrics,id_name in ((anysis_result.wall_uls_metrics,'wall_id'),(anysis_result.beam_uls_metrics,'beam_id')):
+            for m in metrics:
+                checks = [(m.shear_pressure_ratio,m.shear_pressure_ratio_limit,m.is_shear_pressure_passed)]
+                if id_name=='wall_id':
+                    checks.append((m.axial_ratio,m.axial_ratio_limit,m.is_axial_passed))
+                for value,limit,passed in checks:
+                    if not math.isfinite(value) or value<0 or not math.isfinite(limit) or limit<=0 or passed!=(value<=limit):
+                        raise ValueError(f'Invalid/inconsistent {id_name} check')
+            keys = [(getattr(m,id_name),m.story) for m in metrics]
+            if len(set(keys)) != len(keys) or not keys:
+                raise ValueError(f'Missing/duplicate {id_name} checks')
+            member_ids = {key[0] for key in keys}
+            if set(keys) != {(i,s) for i in member_ids for s in range(1,self.story_count+1)}:
+                raise ValueError(f'Incomplete story coverage for {id_name}')
         overall_result = OverallCheckResult()
         dir_chk_results: dict[str, DirectionCheckResult] = {}
         for dir_name in ('X', 'Y'):
@@ -94,8 +116,8 @@ class EvaluationReportPrinter:
             worst = max(wall_uls_metrics, key=lambda item: item.axial_ratio)
             self.logger.info(f" 控制墙肢: #{worst.wall_id}, 轴压比={worst.axial_ratio:.3f}, 限值={worst.axial_ratio_limit:.3f}, {('✅通过' if worst.is_axial_passed else '❌超限')}")
             self.logger.info('【剪压比校核】')
-            wall_worst = max(wall_uls_metrics, key=lambda item: item.shear_pressure_ratio)
+            wall_worst = max(wall_uls_metrics, key=lambda item: item.shear_pressure_ratio/item.shear_pressure_ratio_limit)
             self.logger.info(f" 墙控制构件: #{wall_worst.wall_id}-S{wall_worst.story}, 剪压比={wall_worst.shear_pressure_ratio:.3f}, 限值={wall_worst.shear_pressure_ratio_limit:.3f}, 组合={wall_worst.shear_control_combo}, {('✅通过' if wall_worst.is_shear_pressure_passed else '❌超限')}, length={wall_worst.length:.2f}m, thickness={wall_worst.thickness:.2f}m")
         if beam_uls_metrics:
-            beam_worst = max(beam_uls_metrics, key=lambda item: item.shear_pressure_ratio)
+            beam_worst = max(beam_uls_metrics, key=lambda item: item.shear_pressure_ratio/item.shear_pressure_ratio_limit)
             self.logger.info(f" 连梁控制构件: #{beam_worst.beam_id}-S{beam_worst.story}, 剪压比={beam_worst.shear_pressure_ratio:.3f}, 限值={beam_worst.shear_pressure_ratio_limit:.3f}, 组合={beam_worst.shear_control_combo}, {('✅通过' if beam_worst.is_shear_pressure_passed else '❌超限')}, length={beam_worst.length:.2f}m")

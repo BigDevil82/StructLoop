@@ -45,3 +45,25 @@ def test_unresolved_short_physical_wall_stops_real_ga_before_any_solver_call(lay
     report = json.loads((tmp_path/'optimization/geometry_review.json').read_text(encoding='utf-8'))
     assert report['requires_model_repair'] and report['issues'][0]['source_member_ids'] == ['tiny']
     assert not service.records
+
+
+def test_beam_branch_does_not_turn_one_span_into_two_short_beams(layout: LayoutCandidate,design: DesignCandidate) -> None:
+    from struct_agent.schemas import Member
+    from struct_agent.adapters.fea import native_topology
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import beam_spans
+    members=(Member(member_id='wl',start=(-2.,0.),end=(0.,0.),role='wall'),
+        Member(member_id='wr',start=(1.,0.),end=(3.,0.),role='wall'),
+        Member(member_id='b1',start=(0.,0.),end=(.8,0.),role='secondary'),
+        Member(member_id='b2',start=(.8,0.),end=(1.,0.),role='secondary'),
+        Member(member_id='branch',start=(.8,0.),end=(.8,2.),role='primary'))
+    candidate=layout.model_copy(update={'members':members})
+    topology=native_topology(candidate)
+    spans=beam_spans(topology.beams,topology.walls)
+    assert next(s for s in spans if 2 in s.source_ids).source_ids==(2,3)
+    assert next(s for s in spans if 2 in s.source_ids).length==1.
+    review=review_geometry(candidate,design=design)
+    assert not any(i.code=='BEAM_SPAN_REVIEW' for i in review.issues)
+    support=Member(member_id='midwall',start=(.8,0.),end=(.8,-2.),role='wall')
+    topology=native_topology(candidate.model_copy(update={'members':members+(support,)}))
+    spans=beam_spans(topology.beams,topology.walls)
+    assert next(s for s in spans if 2 in s.source_ids).source_ids==(2,)

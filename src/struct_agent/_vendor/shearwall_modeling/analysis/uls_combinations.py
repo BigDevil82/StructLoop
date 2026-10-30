@@ -1,7 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import math
 from typing import Literal
 from ..builders.base import AnalysisModelContext
 from ..core.constants import concrete_fc_pa
+from ..design.constants import ReinforcementDesignConstants, beam_shear_limit, effective_depth_m
+from ..geometry.wall_piers import beam_spans
 LoadType = Literal['NonSeismic', 'Seismic']
 ForceTuple = tuple[float, float, float]
 
@@ -35,6 +38,8 @@ class WallULSMetric:
     shear_control_combo: str
     shear_control_combo_type: LoadType
     is_shear_pressure_passed: bool
+    effective_depth_m: float = 0.
+    shear_checks: dict[str, tuple[float, float]] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class BeamULSMetric:
@@ -46,6 +51,10 @@ class BeamULSMetric:
     shear_control_combo: str
     shear_control_combo_type: LoadType
     is_shear_pressure_passed: bool
+    effective_depth_m: float = 0.
+    physical_span_m: float = 0.
+    coupling: bool = False
+    shear_checks: dict[str, tuple[float, float]] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class ULSCombinationResult:
@@ -73,11 +82,18 @@ class ULSCombinationAnalyzer:
         self.combo_type_by_name = {item.name: item.type for item in self.combinations}
 
     def run(self, beam_case_forces: dict[str, dict[tuple[int, int], ForceTuple]], wall_case_forces: dict[str, dict[tuple[int, int], ForceTuple]]) -> ULSCombinationResult:
+        for units, name, cases in ((self.context.beam_element_units,'beam_id',beam_case_forces),
+                                   (self.context.wall_story_element_units,'wall_id',wall_case_forces)):
+            expected = {(getattr(u,name),u.story) for u in units}
+            for case, effects in cases.items():
+                if set(effects) != expected:
+                    raise ValueError(f'Incomplete/extra {name} effects in {case}')
+        self.beam_case_forces = beam_case_forces
         beam_combo_forces, wall_combo_forces = self._combine_all(beam_case_forces, wall_case_forces)
         beam_envelope = self._build_envelope(beam_combo_forces)
         wall_envelope = self._build_envelope(wall_combo_forces)
         wall_metrics = self._collect_wall_metrics(wall_envelope, wall_combo_forces)
-        beam_metrics = self._collect_beam_metrics(beam_envelope)
+        beam_metrics = self._collect_beam_metrics(beam_envelope, beam_combo_forces)
         return ULSCombinationResult(beam_forces_by_combo=beam_combo_forces, wall_forces_by_combo=wall_combo_forces, wall_metrics=wall_metrics, beam_metrics=beam_metrics)
 
     def _combine_all(self, beam_case_forces: dict[str, dict[tuple[int, int], ForceTuple]], wall_case_forces: dict[str, dict[tuple[int, int], ForceTuple]]) -> tuple[dict[str, dict[tuple[int, int], ForceTuple]], dict[str, dict[tuple[int, int], ForceTuple]]]:
@@ -97,6 +113,8 @@ class ULSCombinationAnalyzer:
                 raise ValueError(f"Missing member effect {key} in basic case {case_name}")
             a0, a1, a2 = case_forces[case_name][key]
             scale = float(factor)
+            if not all(math.isfinite(float(x)) for x in (a0,a1,a2,scale)):
+                raise ValueError(f'Nonfinite member effect {key} in {case_name}')
             v0 += scale * float(a0)
             v1 += scale * float(a1)
             v2 += scale * float(a2)
@@ -135,8 +153,7 @@ class ULSCombinationAnalyzer:
         for unit in self.context.wall_story_element_units:
             key = (unit.wall_id, unit.story)
             if key not in wall_envelope:
-                continue
-            envelope = wall_envelope[key]
+                raise ValueError(f'Missing wall check {key}')
             concrete_grade = story_profiles[unit.story].material.concrete_grade
             fc_pa = concrete_fc_pa(concrete_grade)
             area_m2 = max(unit.member.length * unit.thickness, 1e-09)
@@ -144,19 +161,30 @@ class ULSCombinationAnalyzer:
             axial_ratio = axial_n / (fc_pa * area_m2)
             axial_limit = self.context.config.seismic.axial_compression_ratio_limit
             b = max(unit.thickness, 1e-09)
-            h0 = max(unit.member.length, 1e-09)
+            h0 = effective_depth_m(unit.member.length)
             denom = max(self.beta_c * fc_pa * b * h0, 1e-09)
-            shear_ratio = envelope.max_shear_n / denom
-            shear_combo_type = self.combo_type_by_name.get(envelope.max_shear_combo, 'NonSeismic')
-            shear_limit = 0.15 if shear_combo_type == 'Seismic' else 0.2
-            metrics.append(WallULSMetric(wall_id=unit.wall_id, story=unit.story, length=unit.member.length, thickness=unit.thickness, axial_ratio=axial_ratio, axial_ratio_limit=axial_limit, axial_control_combo=axial_combo, is_axial_passed=axial_ratio <= axial_limit, shear_pressure_ratio=shear_ratio, shear_pressure_ratio_limit=shear_limit, shear_control_combo=envelope.max_shear_combo, shear_control_combo_type=shear_combo_type, is_shear_pressure_passed=shear_ratio <= shear_limit))
+            checks = {}
+            # Existing design assumptions: ordinary reinforcement, seismic grade 2,
+            # bottom two stories strengthened. No capacity-based grade-1 design.
+            for name, forces in wall_combo_forces.items():
+                _, moment, shear = forces[key]
+                seismic = self.combo_type_by_name[name] == 'Seismic'
+                shear *= 1.4 if seismic and unit.story <= 2 else 1.
+                ratio = abs(moment)/(abs(shear)*h0) if shear else math.inf
+                coefficient = (.20 if ratio > 2.5 else .15) if seismic else .20
+                limit = coefficient / (ReinforcementDesignConstants().gamma_re_shear if seismic else 1.)
+                checks[name] = (shear,limit)
+            control = max(checks,key=lambda name:abs(checks[name][0])/checks[name][1])
+            shear, shear_limit = checks[control]
+            shear_ratio = abs(shear)/denom
+            metrics.append(WallULSMetric(wall_id=unit.wall_id, story=unit.story, length=unit.member.length, thickness=unit.thickness, axial_ratio=axial_ratio, axial_ratio_limit=axial_limit, axial_control_combo=axial_combo, is_axial_passed=axial_ratio <= axial_limit, shear_pressure_ratio=shear_ratio, shear_pressure_ratio_limit=shear_limit, shear_control_combo=control, shear_control_combo_type=self.combo_type_by_name[control], is_shear_pressure_passed=shear_ratio <= shear_limit, effective_depth_m=h0,shear_checks=checks))
         return metrics
 
     def _select_axial_for_wall(self, key: tuple[int, int], wall_combo_forces: dict[str, dict[tuple[int, int], ForceTuple]]) -> tuple[float, str]:
         seismic_candidates: list[tuple[str, float]] = []
         nonseismic_candidates: list[tuple[str, float]] = []
         for combo_name, forces in wall_combo_forces.items():
-            axial_n = abs(forces.get(key, (0.0, 0.0, 0.0))[0])
+            axial_n = max(0.,forces[key][0])  # Compression positive; tension is not axial compression.
             combo_type = self.combo_type_by_name.get(combo_name, 'NonSeismic')
             if combo_type == 'Seismic':
                 seismic_candidates.append((combo_name, axial_n))
@@ -168,21 +196,50 @@ class ULSCombinationAnalyzer:
         combo_name, axial_n = max(source, key=lambda item: item[1])
         return (axial_n, combo_name)
 
-    def _collect_beam_metrics(self, beam_envelope: dict[tuple[int, int], MemberForceEnvelope]) -> list[BeamULSMetric]:
+    def _collect_beam_metrics(self, beam_envelope: dict[tuple[int, int], MemberForceEnvelope],
+                              combo_forces: dict[str, dict[tuple[int,int],ForceTuple]]) -> list[BeamULSMetric]:
         story_profiles = {profile.story: profile for profile in self.context.story_profiles}
         metrics: list[BeamULSMetric] = []
+        spans = {}
+        for story in story_profiles:
+            beams = [u.member for u in self.context.beam_element_units if u.story == story]
+            walls = [u.member for u in self.context.wall_story_element_units if u.story == story]
+            spans.update({(i,story):span for span in beam_spans(beams,walls) for i in span.source_ids})
+        units = {(u.beam_id,u.story):u for u in self.context.beam_element_units}
         for unit in self.context.beam_element_units:
             key = (unit.beam_id, unit.story)
-            envelope = beam_envelope.get(key)
-            if envelope is None:
-                continue
+            if key not in beam_envelope:
+                raise ValueError(f'Missing beam check {key}')
+            span = spans[key]
             concrete_grade = story_profiles[unit.story].material.concrete_grade
             fc_pa = concrete_fc_pa(concrete_grade)
             b = max(unit.width, 1e-09)
-            h0 = max(unit.depth, 1e-09)
+            h0 = effective_depth_m(unit.depth)
             denom = max(self.beta_c * fc_pa * b * h0, 1e-09)
-            shear_ratio = envelope.max_shear_n / denom
-            shear_combo_type = self.combo_type_by_name.get(envelope.max_shear_combo, 'NonSeismic')
-            shear_limit = 0.15 if shear_combo_type == 'Seismic' else 0.2
-            metrics.append(BeamULSMetric(beam_id=unit.beam_id, story=unit.story, length=unit.length, shear_pressure_ratio=shear_ratio, shear_pressure_ratio_limit=shear_limit, shear_control_combo=envelope.max_shear_combo, shear_control_combo_type=shear_combo_type, is_shear_pressure_passed=shear_ratio <= shear_limit))
+            ends = []
+            for point in (span.start,span.end):
+                for i in span.source_ids:
+                    member = units[i,unit.story].member
+                    if member.start.distance_to(point) < 1e-6:
+                        ends.append(((i,unit.story),0));break
+                    if member.end.distance_to(point) < 1e-6:
+                        ends.append(((i,unit.story),1));break
+            checks = {}
+            for name, forces in combo_forces.items():
+                seismic = self.combo_type_by_name[name] == 'Seismic'
+                shear = forces[key][2]
+                if seismic and span.coupling:
+                    # CQC end peaks are not concurrent. Sum absolute end moments
+                    # as a conservative bound, not an invented signed force pair.
+                    moments = sum(abs(forces[k][end]) for k,end in ends)
+                    gravity = {k:tuple(1.2*d+.6*l for d,l in zip(
+                        self.beam_case_forces['Dead'][k],self.beam_case_forces['Live'][k]))
+                        for k in ((i,unit.story) for i in span.source_ids)}
+                    gravity_bound = max(abs(f[2]) for f in gravity.values()) + sum(abs(gravity[k][end]) for k,end in ends)/span.length
+                    shear = math.copysign(max(abs(shear),1.2*moments/span.length+gravity_bound),shear)
+                checks[name] = (shear,beam_shear_limit(b,unit.depth,span.length,seismic))
+            control = max(checks,key=lambda name:abs(checks[name][0])/checks[name][1])
+            shear, shear_limit = checks[control]
+            shear_ratio = abs(shear)/denom
+            metrics.append(BeamULSMetric(beam_id=unit.beam_id, story=unit.story, length=unit.length, shear_pressure_ratio=shear_ratio, shear_pressure_ratio_limit=shear_limit, shear_control_combo=control, shear_control_combo_type=self.combo_type_by_name[control], is_shear_pressure_passed=shear_ratio <= shear_limit, effective_depth_m=h0,physical_span_m=span.length,coupling=span.coupling,shear_checks=checks))
         return metrics

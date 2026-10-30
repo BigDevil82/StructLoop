@@ -32,10 +32,11 @@ def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, anal
             fc = concrete_fc_pa(grade)
             width = unit.thickness if kind == "wall" else unit.width
             depth = unit.member.length if kind == "wall" else unit.depth
-            denominator = max(beta_c * fc * max(width, 1e-9) * max(depth, 1e-9), 1e-9)
+            denominator = beta_c*fc*width*metric.effective_depth_m
             combo_shear = {name: float(values[native_id, story][2]) for name, values in forces.items()}
-            combo_limits = {name: .15 if combination_types[name] == 'Seismic' else .2 for name in combo_shear}
-            shear = abs(combo_shear[metric.shear_control_combo])
+            combo_design_shear = {name:float(check[0]) for name,check in metric.shear_checks.items()}
+            combo_limits = {name:float(check[1]) for name,check in metric.shear_checks.items()}
+            shear = abs(combo_design_shear[metric.shear_control_combo])
             result = design_by_key.get((native_id, story))
             if result is None:
                 raise ValueError(f"Modeled member {native_id} story {story} has no reinforcement check")
@@ -46,9 +47,13 @@ def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, anal
                 story=story, start_m=(unit.member.start.x, unit.member.start.y),
                 end_m=(unit.member.end.x, unit.member.end.y), length_m=metric.length,
                 width_m=width, depth_m=depth, concrete_grade=grade, fc_pa=fc, beta_c=beta_c,
+                effective_depth_m=metric.effective_depth_m,
+                physical_span_m=metric.physical_span_m if kind=='beam' else None,
+                coupling=metric.coupling if kind=='beam' else None,
                 shear_n=shear, denominator_n=denominator, shear_ratio=metric.shear_pressure_ratio,
                 shear_limit=metric.shear_pressure_ratio_limit, control_combo=metric.shear_control_combo,
                 combo_shear_n=combo_shear, combo_shear_limits=combo_limits,
+                combo_design_shear_n=combo_design_shear,
                 control_combo_type=metric.shear_control_combo_type, shear_passed=metric.is_shear_pressure_passed,
                 reinforcement_checked=result is not None, reinforcement_passed=result.is_passed if result else None,
                 reinforcement_messages=tuple(result.messages) if result else ()))

@@ -53,8 +53,8 @@ def write_report(path: Path, members: tuple[MemberDiagnostic, ...], *, parity_pa
     lines = ["# 构件级有限元诊断（冒烟条件）", "",
         f"当前正确实现的独立计算。可选同协议复算对照：{parity_passed}。", "",
         "指标按上游定义为 V/(βc·fc·b·h0)，利用率为该指标/原有限值。力 N，尺寸 m，应力 Pa。",
-        "其中上游 ULS 的 h0：墙取肢长，梁取截面总高；配筋设计对梁另扣保护层。此处原样记录，不混为同一口径。",
-        "组合保留系数正负号，控制剪力取组合绝对值最大值；全部建模墙肢均执行配筋设计。", "",
+        "h0采用截面尺寸扣除40mm纵筋合力点距离；梁跨按墙支座间共线构件识别，保留中间接入节点。",
+        "基本组合剪力与调整后的设计剪力分别保存，按设计剪力/对应限值选择控制组合；全部墙肢逐组合设计。", "",
         "本报告用于定位控制构件，未改变几何、荷载、限值或原算法，不是工程签审。", ""]
     for kind, title in (("wall", "墙肢"), ("beam", "梁")):
         items = tuple(m for m in members if (m.role == "wall") == (kind == "wall"))
@@ -63,7 +63,7 @@ def write_report(path: Path, members: tuple[MemberDiagnostic, ...], *, parity_pa
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|"]
         for m in sorted(items, key=lambda m: m.utilization, reverse=True)[:15]:
             design = "未执行" if not m.reinforcement_checked else ("通过" if m.reinforcement_passed else "不通过")
-            lines.append(f"| {m.member_id} | {m.story} | {m.length_m:.6f} | {m.width_m:.3f} | {m.depth_m:.6f} | "
+            lines.append(f"| {m.member_id} | {m.story} | {m.length_m:.6f} | {m.width_m:.3f} | {m.effective_depth_m:.6f} | "
                 f"{m.shear_n/1000:.3f} | {m.shear_ratio:.6f} | {m.shear_limit:g} | {m.utilization:.3f} | {design} | {m.control_combo} |")
         messages = Counter(msg for m in items for msg in m.reinforcement_messages)
         lines += ["", f"配筋设计消息（构件-楼层计数）：{dict(messages)}", ""]

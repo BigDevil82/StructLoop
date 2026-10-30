@@ -11,6 +11,8 @@ def summarize_native(build: ModelBuildResult, analysis: AnalysisResult, overall:
                      directions: dict[str, DirectionCheckResult], design: ReinforcementDesignSummary) -> ParametricAnalysisResult:
     """Reproduce upstream worst utilization, including last-item tie resolution."""
     def worst(items: list, value: str, limit: str) -> tuple[float, float]:
+        if not items:
+            raise ValueError('Missing member checks cannot be summarized as zero utilization')
         best_value, best_limit, best_util = 0., 1., 0.
         for item in items:
             util = getattr(item, value) / max(getattr(item, limit), 1e-12)
@@ -28,11 +30,13 @@ def summarize_native(build: ModelBuildResult, analysis: AnalysisResult, overall:
         material_concrete_kg=design.total_concrete_kg, material_steel_kg=design.total_steel_kg,
         mass_total_t=(sum(build.floor_load_masses)+sum(build.floor_self_masses))/1000.,
         T1=periods[0], T2=periods[1], T3=periods[2], T4=periods[3], T5=periods[4], T6=periods[5],
-        period_ratio=periods[0]/periods[2] if analysis.modal_summary.period_ratio is None else analysis.modal_summary.period_ratio,
+        period_ratio=float('nan') if analysis.modal_summary.period_ratio is None else analysis.modal_summary.period_ratio,
         torsion_ratio=max(m.torsion_ratio for m in metrics),
         min_shear_weight_ratio=min(m.shear_weight_ratio for m in metrics),
         max_drift_ratio=max(r.max_interstory_drift_ratio for r in directions.values()),
-        min_stiffness_ratio=min(m.stiffness_ratio_adjacent for m in metrics),
+        # Equivalent lower-bound ratio: dividing by 0.7 reproduces the worst
+        # utilization of BOTH the adjacent (0.7) and three-story (0.8) checks.
+        min_stiffness_ratio=min(min(m.stiffness_ratio_adjacent,.7/.8*m.stiffness_ratio_average) for m in metrics),
         max_wall_axial_ratio=wall_axial, max_wall_axial_limit=wall_axial_limit,
         max_wall_shear_ratio=wall_shear, max_wall_shear_limit=wall_shear_limit,
         max_beam_shear_ratio=beam_shear, max_beam_shear_limit=beam_shear_limit,
@@ -41,4 +45,6 @@ def summarize_native(build: ModelBuildResult, analysis: AnalysisResult, overall:
         stiffness_passed=overall.is_stiffness_passed, drift_passed=overall.is_interstory_drift_passed,
         period_ratio_passed=overall.is_period_ratio_passed, wall_axial_passed=overall.is_wall_axial_passed,
         wall_shear_passed=overall.is_wall_shear_pressure_passed, beam_shear_passed=overall.is_beam_shear_pressure_passed,
-        error="")
+        error="",mode_count=len(analysis.modal_summary.periods),
+        mass_participation_x_pct=analysis.modal_summary.mass_participation_x_pct,
+        mass_participation_y_pct=analysis.modal_summary.mass_participation_y_pct)

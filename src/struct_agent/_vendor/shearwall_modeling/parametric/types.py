@@ -110,3 +110,6 @@ class ParametricAnalysisResult:
     wall_shear_passed: bool = True
     beam_shear_passed: bool = True
     error: str = ''
+    mode_count: int = 0
+    mass_participation_x_pct: float = 0.
+    mass_participation_y_pct: float = 0.

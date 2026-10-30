@@ -37,6 +37,8 @@ class ModalSummary:
     torsional_mode_index: int | None
     torsional_period: float | None
     period_ratio: float | None
+    mass_participation_x_pct: float = 0.
+    mass_participation_y_pct: float = 0.
 
 @dataclass
 class DirectionResponse:

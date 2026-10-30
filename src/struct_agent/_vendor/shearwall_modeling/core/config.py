@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional
+import math
 from .constants import CONCRETE_ELASTIC_MODULUS_MPA, GB50011_TG_BY_SITE_CLASS, SEISMIC_ALPHA_MAX_BY_INTENSITY
 from .domain import BeamRole
 
@@ -28,7 +29,7 @@ def _gb50011_spectrum_shape_params(damping_ratio: float) -> tuple[float, float, 
     eta1 = 0.02 + (0.05 - xi) / (4.0 + 32.0 * xi)
     eta2 = 1.0 + (0.05 - xi) / (0.08 + 1.6 * xi)
     eta1 = max(0.0, eta1)
-    eta2 = min(1.0, max(0.55, eta2))
+    eta2 = max(0.55, eta2)
     return (gamma, eta1, eta2)
 
 def _calculate_gb50011_alpha(period: float, alpha_max: float, characteristic_period: float, damping_ratio: float) -> float:
@@ -42,7 +43,7 @@ def _calculate_gb50011_alpha(period: float, alpha_max: float, characteristic_per
         return eta2 * alpha_max * (characteristic_period / period) ** gamma
     if period <= 6.0:
         return alpha_max * (eta2 * 0.2 ** gamma - eta1 * (period - 5.0 * characteristic_period))
-    return alpha_max * max(0.0, eta2 * 0.2 ** gamma - eta1 * (6.0 - 5.0 * characteristic_period))
+    raise ValueError('Periods above 6 s require a separately justified response spectrum')
 
 def _resolve_gb50011_design_params(intensity: float, site_class: str, seismic_group: int, alpha_max_override: Optional[float], Tg_override: Optional[float]) -> tuple[float, float]:
     acc_key = round(float(intensity), 2)
@@ -140,7 +141,13 @@ class SeismicConfig:
     axial_compression_ratio_limit: float = 0.5
 
     def __post_init__(self) -> None:
+        if not math.isfinite(self.damping_ratio) or not 0 < self.damping_ratio < 1:
+            raise ValueError('Finite damping ratio between 0 and 1 required')
         if self.periods and self.sa:
+            if len(self.periods)!=len(self.sa) or len(self.periods)<2 or any(
+                not math.isfinite(v) or v<0 for v in self.periods+self.sa) or any(
+                b<=a for a,b in zip(self.periods,self.periods[1:])):
+                raise ValueError('Response spectrum requires ordered finite periods and nonnegative accelerations')
             return
         if self.periods or self.sa:
             raise ValueError('seismic.periods and seismic.sa should be both provided or both omitted.')

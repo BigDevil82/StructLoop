@@ -7,7 +7,7 @@ from pydantic import Field
 from struct_agent.schemas import DesignCandidate, LayoutCandidate
 from struct_agent.schemas.base import Contract
 from struct_agent.adapters.fea import native_topology
-from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers
+from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import wall_piers, beam_spans
 
 
 class GeometryIssue(Contract):
@@ -36,7 +36,8 @@ def review_geometry(layout: LayoutCandidate, *, design: DesignCandidate | None =
     """
     if wall_merge_review_threshold_m <= 0:
         raise ValueError('Positive model review threshold required')
-    walls = native_topology(layout).walls
+    topology = native_topology(layout)
+    walls = topology.walls
     piers = wall_piers(walls)
     issues = []
     thickness = max(float(design.values[k]) for k in ('tw_bot','tw_mid','tw_top')) if design else None
@@ -49,13 +50,11 @@ def review_geometry(layout: LayoutCandidate, *, design: DesignCandidate | None =
             issues.append(GeometryIssue(code='COLUMN_OR_COMPOSITE_DESIGN_REQUIRED', source_member_ids=source,
                 length_m=length, ratio=length/thickness))
     if design:
-        for member in layout.members:
-            if member.role == 'wall':
-                continue
-            depth = float(design.values['hb_main' if member.role == 'primary' else 'hb_sec'])
-            length = ((member.end[0]-member.start[0])**2+(member.end[1]-member.start[1])**2)**.5
+        for span in beam_spans(topology.beams,walls):
+            depth = max(float(design.values['hb_main' if layout.members[i].role == 'primary' else 'hb_sec']) for i in span.source_ids)
+            length = span.length
             if length / depth < 2.:
-                issues.append(GeometryIssue(code='BEAM_SPAN_REVIEW', source_member_ids=(member.member_id,),
+                issues.append(GeometryIssue(code='BEAM_SPAN_REVIEW', source_member_ids=tuple(layout.members[i].member_id for i in span.source_ids),
                     length_m=length, ratio=length/depth))
     return ModelGeometryReview(wall_merge_review_threshold_m=wall_merge_review_threshold_m,
         physical_wall_pier_count=len(piers), mesh_wall_segment_count=len(walls),

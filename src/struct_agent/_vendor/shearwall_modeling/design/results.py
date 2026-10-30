@@ -10,6 +10,9 @@ class BeamDesignDemand:
     positive_moment_n_m: float
     negative_moment_n_m: float
     shear_n: float
+    moment_cases: tuple[tuple[float, float, bool], ...] = ()
+    shear_cases: tuple[tuple[float, float, bool], ...] = ()
+    coupling: bool = False
 
 @dataclass(frozen=True)
 class WallDesignDemand:
@@ -23,6 +26,10 @@ class WallDesignDemand:
     shear_n: float
     axial_ratio: float
     is_bottom_reinforced_zone: bool
+    # N compression positive, M in N*m, V in N, section ratio limit, seismic.
+    load_cases: tuple[tuple[float, float, float, float, bool], ...] = ()
+    seismic: bool = False
+    shear_limit: float = .20
 
 @dataclass(frozen=True)
 class MaterialUsage:
