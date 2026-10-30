@@ -64,13 +64,13 @@ uv pip install --python .venv/Scripts/python.exe -e .
 ## 固定布置参数优化
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.cli optimize --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/etabs_12_story_spec.json --seed 42 --budget-fea 20 --population 24 --generations 20 --run outputs/current/new_residential_optimization
+.venv/Scripts/python.exe -m struct_agent.cli optimize --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/residential_12_story.json --seed 42 --budget-fea 20 --population 24 --generations 20 --run outputs/current/new_residential_optimization
 ```
 
 `reference_spec.json` **仅为迁移回归示例**，显式列出了旧入口的 28 层、2.9m 层高、
 120mm 板厚及材料/地震参数。正式项目条件、荷载与规范版本仍需工程师确认。
 上述命令采用获准用于诊断的12层条件，仍仅展示接口用法；当前布局含极短物理墙肢，会在真实优化前置检查处阻断。
-整栋网格尚未收敛，先解决分析基础问题，再开展正式优化。
+建模统一采用[最终配置](docs/final_model.md)，软件差异排查已结束；后续按结构受理与工程校核门槛推进。
 也可提供符合公共 Schema 的人工修改方案。
 `--rooms` 必须对应该建筑，CASINO 每次从实际墙线重新编码布局特征，禁止套用另一布置缓存。
 
@@ -156,10 +156,9 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 
 已补充可选构件级 FEA 诊断，可复算某条真实记录并保留控制构件、组合剪力及配筋消息：
 `.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --help`。
-极短墙段、内力组合/包络、局部坐标及墙配筋漏检等问题已直接修复，见 [计算逻辑修正记录](docs/physics_fixes.md)。
+已修正的内力组合、局部坐标、墙肢汇总与配筋检查继续保留，建模约定见 [最终配置](docs/final_model.md)。
 分析分段已按直墙肢汇总；当前12层回归由 `configs/real_fea_reference.json` 绑定，旧28层诊断已退役。
 新生成 `residential_001_rcgnn_03` 保留短墙原类别并输出几何审查；未消解短墙时真实优化会前置阻断。
-本机已找到YJK 2025并验证官方API导入；成熟前处理与验算尚未接通，见 [模型语义与软件对照](docs/model_semantics.md)。
 真实优化默认直接 FEA；旧代理权重在与修正后的标签验证兼容前不参与筛选。
 
 ## 当前边界
@@ -174,37 +173,11 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
   从磁盘恢复及工程人工审批界面尚未实现；同进程会话和已获批候选可继续执行。
 - 论文 Ours 的决策收益机制、正式对比及消融尚待研究设计与实验，不以冒烟替代科学结论。
 
-## ETABS验证
 
-ETABS小模型与12层住宅对照见 [docs/etabs_cross_validation.md](docs/etabs_cross_validation.md)。
-使用可选 `etabs` 依赖（Windows comtypes、psutil）；与OpenSees比较时还需现有 `runtime` 环境。
-固定入口为 `python -m struct_agent.etabs_cli`，只创建独立实例，不附着用户工程。
-12层条件独立保存在 `configs/etabs_12_story_spec.json`，原28层配置不变。
-当前只完成弹性水平诊断和解析解验证；新增检查发现两端整栋竖向网格敏感、尚未收敛，见 [子结构与网格检查](docs/x_displacement_checks.md)。尚未完成ETABS重力/反应谱/配筋复核，不能作为工程通过结论。
-同边界单墙已完成有/无真实楼层刚性楼板的1/2/4/8片对照及零泊松控制；
-可用 `.venv/Scripts/python.exe -m struct_agent.etabs_cli single-wall --help` 查看入口，完整复现命令和结果见上述文档。
-单墙未复现整栋显著变软，当前仍不开展正式优化。
+## 最终建模方案
 
-最新规则按用户要求采用同条件双软件差异小于5%即通过并关闭，不再核查校准。
-已批量完成L/T形墙、墙梁组合及12层整栋的周期、逐层位移和层间响应对照，
-结果见 [结构批量对照](docs/structural_comparison.md)。运行入口：
-
-```powershell
-.venv/Scripts/python.exe -m struct_agent.adapters.etabs.structural_batch --run outputs/current/new_structural_batch --report outputs/reports/new_structural_batch
-```
-
-原粗网格屋顶主方向位移已通过，但整栋部分逐层/层间响应及高阶周期仍超限，不能标为全部通过。
-已完成[超限原因检查](docs/exceedance_causes.md)，量化了MVLEM积分位置对低层响应的影响；
-整栋剩余差异仍需隔离梁墙节点弯矩/转角传递，未将诊断反事实直接替换为生产模型。
-后续[实际端区与连接对照](docs/beam_wall_connections.md)已排除墙梁组合的端区影响，
-修复了ETABS不稳定警告漏判。[最终建模核对](docs/model_form_review.md)读取原整栋972根梁的实际零端区与物理轴，
-纯墙ShellThin/ShellDKGQ的132项全部小于5%（最大0.81%），分离出宏单元近似和梁墙耦合通道。
-上述132项通过只属于去梁的纯墙诊断；此前将带梁体系剩余差异一并收口的表述过强，现已澄清。
-[保留梁全部刚度的节点转角对照](docs/joint_rotation_transfer.md)将差异缩小到面内钻转/梁端弯曲耦合通道，
-尚未证明带梁整栋差异不可避免；网格可靠性、其他工况和正式优化门槛继续保留。
-后续[有限连接区与整栋诊断](docs/beam_wall_resolution.md)已保留全部梁比较直接共节点、实际梁高连接区和竖向网格，
-量化了局部连接/网格与MVLEM膜内近似的不同影响，并按用户补充建议核查实际分析网格、边约束及水平细分。
-不可变工件及全部超限项见该文证据入口，不用主方向接近替代完整验收。
+统一使用每层每段墙1个MVLEM_3D与完整刚度Euler梁。软件差异已按用户决定接受，停止排查。
+关键配置与对应位移、周期结论仅保留在 [final_model.md](docs/final_model.md)。
 
 ## Git 与本地数据
 

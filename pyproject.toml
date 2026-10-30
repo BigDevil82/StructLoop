@@ -16,7 +16,6 @@ runtime = [
   "networkx==3.6.1", "openseespy==3.8.0.0", "pyarrow==23.0.1", "lightgbm==4.6.0",
 ]
 test = ["pytest==8.4.2"]
-etabs = ["comtypes==1.4.17; sys_platform == 'win32'", "psutil==7.2.2"]
 
 [project.scripts]
 structloop = "struct_agent.cli:main"

@@ -7,7 +7,7 @@
       "sha256": "bfbf0d143723c13748f176a5a196f46116d5473493b142a89412325caabb4b42"
     },
     "spec": {
-      "path": "configs/etabs_12_story_spec.json",
+      "path": "configs/residential_12_story.json",
       "sha256": "6b7c7e71f461caf2ecfcdef59ccd08c5c4255b2f0403cc5f3808410b9d35e0e7"
     },
     "analysis": {

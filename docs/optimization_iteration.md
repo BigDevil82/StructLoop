@@ -42,7 +42,7 @@
 使用已存在的当前生成布局，以及给定初始参数；复跑必须更换输出目录：
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/etabs_12_story_spec.json --initial-design outputs/current/design_12_story/design.json --run outputs/current/new_feedback_search --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 6 --population 2 --generations 5
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/residential_12_story.json --initial-design outputs/current/design_12_story/design.json --run outputs/current/new_feedback_search --case-id residential_001 --purpose smoke_only --policy rules --seed 42 --budget-fea 6 --population 2 --generations 5
 .venv/Scripts/python.exe -m pytest -q tests/unit/test_search_feedback.py tests/unit/test_incremental_ga.py tests/unit/test_optimization_env.py
 .venv/Scripts/python.exe -m pytest -q
 .venv/Scripts/python.exe -m pytest -q --run-real
@@ -50,4 +50,4 @@
 
 学校API已接入，规则决策不消耗API调用。早期28层反馈搜索保留为历史轨迹，不能用于当前物理指纹的标签。
 上例已改为当前12层输入，但真实GA会因尚未消解的极短物理墙肢前置阻断，不应绕过门槛。
-当前还存在整栋网格未收敛问题，见 `x_displacement_checks.md`；尚不能启动正式优化或论文比较。
+建模已按用户决定固定，软件差异排查结束，见 `final_model.md`；后续依照结构受理、工程校核及实验设计门槛推进。

@@ -30,11 +30,11 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 ## 真实运行
 
 ```powershell
-.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/etabs_12_story_spec.json --run outputs/current/new_agent_run --case-id residential_001 --purpose smoke_only --policy llm --seed 42 --budget-fea 5 --population 3 --generations 2
+.venv/Scripts/python.exe -m struct_agent.agent_cli --layout outputs/current/residential_001/layout.json --rooms outputs/current/residential_001/room_graph.json --spec configs/residential_12_story.json --run outputs/current/new_agent_run --case-id residential_001 --purpose smoke_only --policy llm --seed 42 --budget-fea 5 --population 3 --generations 2
 ```
 
 上例使用当前12层输入；极短物理墙肢尚未消解时会在前置检查处阻断，不应切换旧布局绕过门槛。
-整栋分析网格也尚未收敛。此处展示接口，历史真实调用链冒烟不代表当前模型已经满足工程要求。
+建模配置已固定，软件差异排查结束，见 `docs/final_model.md`。此处展示接口，历史调用链冒烟不代表工程设计通过。
 
 `--policy fixed|rules|llm` 使用相同评价服务、候选池与 CASINO 配置。
 `--layout` 可重复指定有顺序的预置候选池；当前默认工程图只有一个既有 RC-GNN 方案。

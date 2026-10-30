@@ -30,21 +30,21 @@
       "destination": "src\\struct_agent\\_vendor\\data_engine\\postprocess\\fem_builder.py",
       "source_sha256": "79cfa4b4e2507c29fc0f9a29016d8c1f7045396b4f958ebbb737e4afdad996d2",
       "destination_sha256": "a2ba2b2e9f6ca85a2a582139ade362ab99b606abfa8dea1fcdde244fbc4124c8",
-      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\algorithms\\genetic.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_optimization\\algorithms\\genetic.py",
       "source_sha256": "8aa1a9f8ff84578d8e331afb500ae2d2d6acf5a98110c27673da3abde35bf7eb",
       "destination_sha256": "4d6d040263916a2b1d5a8060ff0520f0c9aefd42dfc1beef1721480099f169ec",
-      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\problems\\shearwall_problem.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_optimization\\problems\\shearwall_problem.py",
       "source_sha256": "7f356705b7b301424f57480bfeee2bf3fb012d69ede2fa41f8168b720312ee89",
       "destination_sha256": "2987e8aebb507111e29d8d0d9438e6c1fa01f91876178e549be8dcc9ed71e546",
-      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\surrogate\\gnn\\model.py",
@@ -75,7 +75,7 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\parametric\\analysis.py",
       "source_sha256": "fe2a9f9e0d94d62d700dbcc82eaa6907b3f7ee5ef76afeae21d2e5c6383e7365",
       "destination_sha256": "c2828b4c9f7d84239eccf4872dcb310b2acc2c01e11e95ddf5d9b3effc3697ec",
-      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_pred\\config.py",
@@ -136,7 +136,7 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_optimization\\surrogate_candidate.py",
       "source_sha256": "33c7173d55faceaaf5a0fd288a4b4c0c6f0d8d22f565de9fc959ba5541d179c7",
       "destination_sha256": "3bc43ff998c982f19a20e50fd0b741ff5ac347786cadb6b15cba8fc5363925ae",
-      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_optimization\\surrogate_cost.py",
@@ -161,7 +161,7 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_optimization\\cost_estimation.py",
       "source_sha256": "b0c6d72702e30c5b6ad0a446961bef67d2499dd3707feacecc9d6c1366889182",
       "destination_sha256": "0bda1e685e695f51725783758617d8b7a23c7736e9bb9392da3b9f0ead40a282",
-      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\surrogate\\features\\consts.py",
@@ -187,7 +187,7 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\builders\\base.py",
       "source_sha256": "e5b9978c7b4c2922b58bbabd77a3b17c31298fd41115532484b8b7ecf3235ab6",
       "destination_sha256": "c3fc3eea5ec7294ed90f372c32154f482f48490086966a5a408a61d6a6aa6924",
-      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\core\\config.py",
@@ -206,7 +206,7 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\design\\pipeline.py",
       "source_sha256": "9d72e153ff58776c2d693fff9b6c200c837f124583c97942d40db6c8b9dfbe62",
       "destination_sha256": "d47231e531316a4ad0f68ecac527c2c290df35ac58117bfc5f6dd763bc8db6c5",
-      "local_corrections": "Correctness fixes 2026-10-28; see docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-28; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\parametric\\space.py",
@@ -231,7 +231,7 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\analysis\\basic_static_case.py",
       "source_sha256": "4a65b6bfdd733fb892e21100b4e128f95c866248a2109101ec3fe367b33fc2b0",
       "destination_sha256": "35188607fd437742185789f220031f6fb5d51aacd3c431b95be346f4dd4fb680",
-      "local_corrections": "Correctness fixes 2026-10-28; see docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-28; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\analysis\\checkers.py",
@@ -244,7 +244,7 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\analysis\\response_spectrum.py",
       "source_sha256": "1e6362a1fbe852b0458ddac387bb84a83c2ebf92dd9a8a765b02d35b14bb0c7a",
       "destination_sha256": "7848fe875a4507b7f6c26802fa4d74b90719fa681db25d130bfdfaf7021d6032",
-      "local_corrections": "Correctness fixes 2026-10-28; see docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-28; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\analysis\\results.py",
@@ -257,21 +257,21 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\analysis\\uls_combinations.py",
       "source_sha256": "094ab0b94187daf2c1399deda120b2daa064d9dc1d5c5df4d265a96f218e2f24",
       "destination_sha256": "6b47fd2c54d87fac5ff06ceefe7548c069f65845adfc9bab7282e3fc18ff4f4b",
-      "local_corrections": "Correctness fixes 2026-10-28; see docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-28; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\geometry\\mass_estimation.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\geometry\\mass_estimation.py",
       "source_sha256": "b54cc7e9417f10c41b24544132389c90de47da00eefcd9c75d411e25445ffaea",
       "destination_sha256": "10dcd5f7029739151309b0cb086b25edf8137983314442c3165ce023005e42ff",
-      "local_corrections": "Model semantics fixes 2026-10-29; see docs/model_semantics.md"
+      "local_corrections": "Model semantics fixes 2026-10-29; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\design\\beam.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\design\\beam.py",
       "source_sha256": "09f2bc608b958803b11489676540b06ecbcb0d28d12402d1646aac737a19689b",
       "destination_sha256": "49a72e05247712737f8f5b6161462af46b2b8da0e73c292855a9633d666e11e2",
-      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\design\\extractor.py",
@@ -290,21 +290,21 @@
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\design\\wall.py",
       "source_sha256": "4ff3f19b5af0bf57e3607de7084701ed52929b4cefeda750dc9ccc75fc3fdbde",
       "destination_sha256": "d0aebd03c9784beea623c6de5120cd8f4fa044d2fa95967ff9e6a88e7683ffeb",
-      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-29; see docs/optimization_iteration.md and docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\analysis\\member_forces.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\analysis\\member_forces.py",
       "source_sha256": "24c726347a6893f4ef77cdba9290f95482389dab6e5ef658ef2a9569742e2422",
       "destination_sha256": "6d5d354741348848423727a6ec8b203f766f94da6c329a65b7e49fcfc8e67cbb",
-      "local_corrections": "Correctness fixes 2026-10-28; see docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-28; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\analysis\\combinations.py",
       "destination": "src\\struct_agent\\_vendor\\shearwall_modeling\\analysis\\combinations.py",
       "source_sha256": "231ecc04ed558cd52de065222b5d72e1663edc87fe0788ac3204cdb914352b83",
       "destination_sha256": "7747d298cd54ed80fcedaec4d7bb2553d05d737fc5ac3a17cdfe59fd17c9af90",
-      "local_corrections": "Correctness fixes 2026-10-28; see docs/physics_fixes.md"
+      "local_corrections": "Correctness fixes 2026-10-28; see docs/final_model.md"
     },
     {
       "source": "E:\\Common\\Desktop\\Research\\deepLearning\\codes\\Png2Dxf\\src\\shearwall_modeling\\analysis\\modal.py",
