@@ -1,12 +1,13 @@
 """Inference only: native RC-GNN features -> one deterministic wall layout."""
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from struct_agent.schemas import LayoutCandidate, RoomGraph
+from struct_agent.schemas import LayoutCandidate, Member, RoomGraph
 from .geometry import layout_from_legacy
 
 
@@ -67,6 +68,71 @@ class RCGNNAdapter:
         return layout_from_prediction(graph, self.predict(graph), layout_id=layout_id)
 
 
+def preprocess_short_members(layout: LayoutCandidate) -> LayoutCandidate:
+    """Flip physical chains <=180 mm into adjacent longer opposite-type chains.
+
+    Work in global XY mm; return public geometry in m. Collinear subdivisions
+    are grouped before applying the threshold. Apply flips simultaneously,
+    retain junctions and preserve the original primary/secondary beam roles.
+    """
+    import networkx as nx
+    from shapely.geometry import LineString
+    from struct_agent._vendor.data_engine.postprocess.fem_builder import FEMTopologyBuilder
+
+    segments = [{"geometry": LineString([tuple(round(v*1000, 6) for v in p)
+                 for p in (m.start, m.end)]), "type": "shearwall" if m.role == "wall" else "beam"}
+                for m in layout.members]
+    endpoints: dict[tuple[float, float], list[int]] = defaultdict(list)
+    graph = nx.Graph()
+    graph.add_nodes_from(range(len(segments)))
+    for i, segment in enumerate(segments):
+        segment["length"] = segment["geometry"].length
+        for point in segment["geometry"].coords:
+            endpoints[point].append(i)
+
+    def parallel(i: int, j: int) -> bool:
+        p, q = segments[i]["geometry"].coords
+        r, s = segments[j]["geometry"].coords
+        return abs((q[0]-p[0])*(s[1]-r[1])-(q[1]-p[1])*(s[0]-r[0])) < (
+            1e-8*segments[i]["length"]*segments[j]["length"])
+
+    for indices in endpoints.values():
+        for position, i in enumerate(indices):
+            for j in indices[position+1:]:
+                if segments[i]["type"] == segments[j]["type"] and parallel(i, j):
+                    graph.add_edge(i, j)
+    groups = list(nx.connected_components(graph))
+    lengths = {i: sum(segments[j]["length"] for j in group) for group in groups for i in group}
+    flips = {}
+    for group in groups:
+        i = min(group)
+        if lengths[i] > 180.+1e-6:
+            continue
+        neighbors = {j for k in group for p in segments[k]["geometry"].coords for j in endpoints[p]}-group
+        if any(segments[j]["type"] != segments[i]["type"] and lengths[j] > 180.+1e-6
+               and parallel(i, j) for j in neighbors):
+            flips.update({k: "beam" if segments[i]["type"] == "shearwall" else "shearwall" for k in group})
+    for i, kind in flips.items():
+        segments[i]["type"] = kind
+
+    builder = FEMTopologyBuilder()
+    builder._build_topology(builder._merge_collinear_same_type_segments(segments))
+    members = []
+    for element in builder.elements:
+        role = "wall"
+        if element["type"] == "beam":
+            line = LineString([element["start_coord"], element["end_coord"]])
+            roles = {layout.members[i].role for i, segment in enumerate(segments)
+                     if layout.members[i].role != "wall" and line.intersection(segment["geometry"]).length > 1e-6}
+            if len(roles) != 1:
+                raise ValueError(f"Merged beam roles need review: {element['id']}: {sorted(roles)}")
+            role = roles.pop()
+        members.append(Member(member_id=f"{element['type']}_{element['id']}",
+            start=tuple(v/1000 for v in element["start_coord"]),
+            end=tuple(v/1000 for v in element["end_coord"]), role=role))
+    return LayoutCandidate.model_validate({**layout.model_dump(), "members": tuple(members)})
+
+
 def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: str,
                            symmetry_axis_mm: float | None = None) -> LayoutCandidate:
     """Retain upstream topology construction, including beam roles and slabs."""
@@ -92,5 +158,6 @@ def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: s
         else:
             item["beam_role"] = m.get("beam_role", "primary")
             raw["beams"].append(item)
-    return layout_from_legacy(raw, unit="mm", layout_id=layout_id,
-                              source="rcgnn" if symmetry_axis_mm is None else "rcgnn_symmetry_union")
+    layout = layout_from_legacy(raw, unit="mm", layout_id=layout_id,
+                               source="rcgnn" if symmetry_axis_mm is None else "rcgnn_symmetry_union")
+    return preprocess_short_members(layout)
