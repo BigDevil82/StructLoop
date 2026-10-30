@@ -47,14 +47,6 @@ def main() -> None:
                               help="CASINO surrogate inference device; CPU is the regression default")
     optimization.add_argument("--screening-threshold", type=float, default=None)
     optimization.add_argument("--use-surrogate", action="store_true", help="Require weights trained against the current FEA signature")
-    mock = sub.add_parser("run-case", help="Synthetic state-machine verification only; no real FEA")
-    mock.add_argument("--case", type=Path, required=True)
-    mock.add_argument("--run", type=Path, required=True)
-    mock.add_argument("--seed", type=int, required=True)
-    mock.add_argument("--budget-fea", type=int, required=True, help="Mock evaluation budget")
-    mock.add_argument("--policy", choices=("scripted", "fixed"), default="scripted")
-    mock.add_argument("--approve-mock-layout", action="append", default=[],
-                      help="Explicit simulation approval of a named layout; not engineering approval")
     for cmd in (generate,optimization):
         cmd.add_argument("--assets", type=Path, default=Path("configs/local_assets.json"))
         cmd.add_argument("--run", type=Path, required=True)
@@ -62,12 +54,6 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "optimize" and args.generations_per_step is not None and args.generations_per_step < 1:
         parser.error("--generations-per-step must be positive")
-    if args.command == "run-case":
-        from struct_agent.workflows.runner import run_mock_case
-        state = run_mock_case(args.case, args.run, seed=args.seed, budget=args.budget_fea,
-                             policy=args.policy, approved_mock_layouts=tuple(args.approve_mock_layout))
-        print(f"MOCK ONLY: {state.status}; mock evaluations={state.fea_calls_used}; artifacts: {args.run}")
-        return
     names = tuple(f"rc_fold_{i}" for i in range(5)) if args.command == "generate" else (("feasibility", "steel") if args.use_surrogate else ())
     assets = load_assets(args.assets, names=names)
     if args.command == "generate":

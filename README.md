@@ -1,19 +1,19 @@
 # StructLoop
 
 住宅剪力墙布置、固定布置参数优化及结构分析的最小可复用工具。
-规划见 [docs/PLAN.md](docs/PLAN.md)；接口证据见 [docs/upstream_contracts.md](docs/upstream_contracts.md)。
+规划见 [docs/PLAN.md](docs/PLAN.md)；真实决策循环见 [docs/phase4_agent.md](docs/phase4_agent.md)。
 
 本项目从只读上游提取运行所需模块，不迁移训练、论文实验或 CAD 交互工程。
 内部几何单位为 m；旧模型的 mm 特征与参数只在 Adapter 边界转换。
-当前迁移状态、验证结果与限制见 [docs/progress.md](docs/progress.md)。
+建模配置见 [docs/final_model.md](docs/final_model.md)，当前限制见下文。
 
 ## 已迁入的最小能力
 
 - RC-GNN：准备好的房间图或符合旧项目图层约定的 DXF → 五折推理 → 墙、主次梁、楼板拓扑。
-- CASINO：固定布置 → FuseGNN 可行性筛选/钢筋量排序 → GA 参数搜索 → 真实 FEA → 独立局部校准缓冲区。
+- CASINO：固定布置 → GA 参数搜索 → 真实 FEA；兼容权重经验证后才可启用 FuseGNN 筛选、排序及局部校准。
 - OpenSees：仅 MVLEM_3D 建模、反应谱/静力组合、原有校核与配筋用量。
 
-48 个旧工程运行模块（约 5,176 行）存放在私有 `src/struct_agent/_vendor/`；
+专业计算运行模块存放在私有 `src/struct_agent/_vendor/`；
 新代码只通过 `schemas/`、`adapters/`、`services/analysis.py` 暴露公共接口。
 不依赖旧仓库的 `sys.path`、训练工程或运行目录。来源与哈希见
 [`migration_manifest.json`](src/struct_agent/_vendor/migration_manifest.json)。
@@ -38,14 +38,14 @@ uv pip install --python .venv/Scripts/python.exe -e .
 
 该开发脚本从只读上游复制 5 个 RC-GNN 权重、2 个 CASINO 权重及一个案例的 DXF/JSON，
 验证 SHA256 后写入 `configs/local_assets.json`。大型权重、案例与运行输出已加入 Git 忽略。
-迁移本身可由 `python -m scripts.migrate_runtime` 复现；日常运行无需再次迁移。
+历史迁移脚本已移除；当前专业计算实现及来源哈希仍保留。
 
 ## 生成结构布置
 
 默认工程测试案例为用户指定的 **residential_001**：
 `data/local/residential_001/architecture_preprocessed.dxf`，原文件为 `archi_comp.dxf`。
 来源、SHA256、类别及单位解释保存在 [configs/test_case.json](configs/test_case.json)。
-后续布置生成、优化和完整流程测试使用此图；L17_101 仅用于核对移入代码前后的结果，toy_01 仅用于模拟数据测试。
+后续布置生成、优化和完整流程测试使用此图；L17_101 仅用于核对移入代码前后的结果。
 
 ```powershell
 .venv/Scripts/python.exe -m struct_agent.cli generate --seed 42 --run outputs/current/new_residential_generation
@@ -58,8 +58,8 @@ uv pip install --python .venv/Scripts/python.exe -e .
 当前 `symmetry_mode=none`，未迁入旧案例入口的 `union` 对称化后处理；这不是已审批结构方案。
 
 目录必须是新的。保存 `manifest.json`、`room_graph.json`、`ratios.npy` 和 `layout.json`。
-已有房间图可直接调用 `RCGNNAdapter.generate()`；字段和单位见
-[公共数据格式说明](docs/data_contracts.md)。单一条件只生成一个确定性候选。
+已有房间图可直接调用 `RCGNNAdapter.generate()`；输入由 `schemas/graph.py` 校验，
+公共几何单位为 m、原生特征长度单位为 mm。单一条件只生成一个确定性候选。
 
 ## 固定布置参数优化
 
@@ -97,7 +97,7 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 当前一代表示一个完成评价和排序的种群；没有被忽略的尾随种群。
 `advance(1)` 不等于一次 FEA，实际次数由种群、代理与缓存决定。
 可用 `--initial-design` 从已有结构参数开始；按可行性、违反量、材料成本排序，
-并以真实反馈提出离散参数调整。流程与材料估算修正见 [优化迭代说明](docs/optimization_iteration.md)。
+并通过 `adapters/design_search.py` 以真实反馈提出离散参数调整；候选仍须经过真实评价。
 
 对应验证：
 
@@ -109,33 +109,16 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 后一组使用当前工程图和真实 FuseGNN 权重，但 **FEA 响应为明确标记的合成数据**，
 只验证会话一致性、预算和隔离。它不证明新工程结构可行，也不代表真实局部校准效果。
 
-## 模拟状态机（Phase 2 最小切片）
-
-先生成一次合成算例（已存在则不覆盖），再运行新的输出目录：
-
-```powershell
-.venv/Scripts/python.exe scripts/make_dummy_case.py --out data/examples/toy_01
-.venv/Scripts/python.exe -m struct_agent.cli run-case --case data/examples/toy_01/case.json --run outputs/current/my_mock_01 --seed 42 --budget-fea 4
-```
-
-默认在请求切换布局时停为 `WAITING_APPROVAL`。若要测试完整的模拟审批链，在新运行命令中
-添加 `--approve-mock-layout layout_b`；此选项只表示显式允许该**模拟布局**切换，不代表工程师签审。
-`--policy fixed` 可运行不换布局的固定流程。所有响应和摘要均标记 `mock`，未调用真实 FEA。
-
-保存 `case.json`、`manifest.json`、`events.jsonl`、逐步 `states/`、`analyses/` 和 `summary.json`。
-该算例使用预置候选队列；`CONTINUE_OPTIMIZATION` 目前在此入口中仅消费下一候选，尚未接入 CASINO 会话。
-种子记录在 manifest；当前 fixture 与策略没有随机采样，同种子轨迹逐字节一致。
-
 ## 验证
 
 ```powershell
-.venv/Scripts/python.exe scripts/audit_upstream.py --output docs/upstream_contracts.md
 .venv/Scripts/python.exe -m pytest -q
 .venv/Scripts/python.exe -m pytest -q tests/integration/test_real_adapters.py -m real --run-real
 ```
 
 最后一条会实际运行RC-GNN和OpenSees：前者检查当前建筑图的布置输出，后者将结构计算结果与之前保存的结果核对。
-所用输入和参考结果的路径见 [进度记录](docs/progress.md)。普通测试默认跳过需要模型权重或真实求解器的测试。
+所用输入和参考结果的路径见 `configs/real_fea_reference.json`。普通测试默认跳过需要模型权重或真实求解器的测试。
+完整本地验收可运行 `.venv/Scripts/python.exe -m pytest -q --run-real`。
 
 ## Phase 4 决策与学校 LLM
 
@@ -151,7 +134,7 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 `outputs/archive/evidence_20261029.zip::phase4_real_llm_01/` 已完成“真实分析→LLM 再决策→再次真实分析”，
 5 次 FEA 均求解成功但结构不可行，预算耗尽后模型请求人工检查；仅作基本流程测试。
 用户已批准 `residential_001_symmetry_02` 作为本轮第二候选，批准绑定布局与设计条件哈希，
-不代表正式工程签审。后续真实跨布局结果见 [进度记录](docs/progress.md)。
+不代表正式工程签审；历史轨迹仍保存在上述归档中。
 
 已补充可选构件级 FEA 诊断，可复算某条真实记录并保留控制构件、组合剪力及配筋消息：
 `.venv/Scripts/python.exe -m struct_agent.diagnostics_cli --help`。
@@ -180,7 +163,9 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 
 ## Git 与本地数据
 
-本地仓库使用 `main` 分支。每次任务完成并验证后更新进度记录、检查暂存内容并提交；不自动推送远端。
+本地仓库使用 `main` 分支。每次任务完成并验证后检查暂存内容并提交，在提交说明中记录验证；不自动推送远端。
 源码、测试、配置、合成 fixture 与数据哈希受版本管理；`.venv`、真实 DXF/DWG、权重、缓存、日志、
 `outputs/` 和密钥文件被忽略。真实案例需保留本地副本或从配置中记录的来源恢复，再校验 SHA256。
-输出保留规则、当前证据入口和清理记录见 [输出管理](docs/output_management.md)。
+当前布局位于 `outputs/current/residential_001/`，设计位于 `outputs/current/design_12_story/`；
+真实分析参考结果由 `configs/real_fea_reference.json` 索引，历史归档由 `docs/outputs_archive_index.json` 索引。
+运行结果继续写入全新目录，不覆盖既有分析。

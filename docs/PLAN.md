@@ -45,54 +45,26 @@
 - **核心输出**：可行的布置 $L^*$ 与参数 $x^*$、分析模型、真实 FEA 和约束验算结果、完整执行轨迹、优化比较结果；后期增加结构 DWG、设计报告与可选施工图导出。
 - **最小科研成功**：至少跑通一个**真实** RC-GNN→CASINO→FEA→状态更新→二次决策→再次评价的闭环，并能在等预算条件下与固定工作流比较。Mock 闭环只证明工程软件链路无误，不证明研究假设成立。
 
-## 2. 本地仓库目录结构设计
+## 2. 当前目录与入口
 
-```text
-project_root/
-├── PLAN.md                         # 本文件：接口、阶段、验收纪律
-├── RESEARCH_ROADMAP.md             # 研究故事线、长期路线
-├── pyproject.toml                   # Python 包、开发依赖和 CLI 入口
-├── README.md                        # 安装、环境、复现实验说明
-├── .env.example                     # 仅字段名；不提交密钥
-├── configs/
-│   ├── base.yaml                    # 单位、路径、日志、预算及公共设置
-│   ├── models.yaml                  # RC-GNN / CASINO 路径与原始参数映射
-│   ├── solvers/                     # mock / 主 FEA / 其他适配器
-│   ├── policies/                    # fixed / rules / llm / proposed / ablations
-│   └── experiments/                 # 数据划分、种子、预算、指标
-├── data/
-│   ├── raw/                         # 原始 DWG/模型/数据；只读，默认 Git 忽略
-│   ├── interim/                     # 建筑语义解析及图预处理
-│   ├── processed/                   # 标准化 graph、设计条件、候选库
-│   └── examples/toy_01/            # 无商业软件依赖的最小测试算例
-├── checkpoints/                     # 外部模型权重：记录版本，不提交大文件
-├── src/struct_agent/
-│   ├── schemas/                     # project.py, graph.py, layout.py, analysis.py, state.py
-│   ├── io/                          # load_case.py, cad_parser.py, normalize.py, artifact_store.py
-│   ├── models/                      # RC-GNN / CASINO 封装；不复制训练工程
-│   ├── adapters/                    # rcgnn.py, casino.py, fea/{base,mock,real}.py
-│   ├── services/                    # layout.py, optimization.py, analysis.py, reporting.py
-│   ├── envs/design_env.py           # 状态转移、动作合法性、预算/审批控制
-│   ├── agents/                      # scripted_policy.py, fixed_policy.py, rule_policy.py, llm_policy.py, proposed.py
-│   ├── workflows/                   # runner.py, approval.py, state_machine.py
-│   ├── evaluation/                  # metrics.py, compare.py, ablation.py
-│   └── cli.py                       # run-case, evaluate, report 等 CLI
-├── scripts/
-│   ├── audit_upstream.py            # 盘点现有 RC-GNN/CASINO/FEA 实际接口
-│   ├── make_dummy_case.py           # 最小合成数据，不用于论文性能结论
-│   ├── run_case.py                  # CLI 的薄封装（可选）
-│   ├── run_benchmark.py             # 多案例/多种子批量实验
-│   └── make_figures.py              # 从原始实验结果生成论文图表
-├── tests/
-│   ├── unit/                        # schema、约束、预算、状态机
-│   ├── integration/                 # adapters + workflow；mock 可在 CI 跑
-│   ├── regression/                  # 已知案例与真实求解结果快照
-│   └── fixtures/                    # 小图、小布局、mock FEA 响应
-├── outputs/                         # 每次运行独立目录：运行文件、日志、表格、图片
-└── docs/                            # 字段字典、模型输入输出检查、软件能力矩阵
-```
+| 路径 | 用途 |
+|---|---|
+| `src/struct_agent/cli.py` | `generate` 生成布局，`optimize` 优化固定布局 |
+| `src/struct_agent/agent_cli.py` | 固定、规则或 LLM 策略驱动真实优化会话 |
+| `src/struct_agent/workflows/optimization_env.py` | 状态更新、动作门控、预算及布局审批 |
+| `src/struct_agent/schemas/` | 公共输入输出、决策和优化状态的严格校验 |
+| `src/struct_agent/adapters/` | RC-GNN、CASINO、OpenSees、诊断及对称化适配 |
+| `src/struct_agent/services/` | 统一分析记账、建模前检查及诊断报告 |
+| `src/struct_agent/evaluation/compare.py` | 比较条件一致的策略运行 |
+| `src/struct_agent/_vendor/` | 保留的专业计算实现及来源哈希 |
+| `scripts/` | 上游审计、本地资产导入及对称候选准备 |
+| `tests/` | 单元与集成测试，合成数据只作为测试输入 |
+| `configs/test_case.json` | 默认工程图及来源哈希 |
+| `configs/real_fea_reference.json` | 当前真实分析输入及参考结果索引 |
+| `outputs/` | 本地运行结果，不提交 Git |
 
-**管理原则**：`data/raw` 与上游模型仓库保持只读；研究代码只通过 Adapter 调用它们。一次运行一个 `run_id`，将输入哈希、Git commit、配置快照、模型权重版本、软件版本、随机种子写入 `outputs/<run_id>/manifest.json`。大型权重和商业数据不进 Git。
+历史迁移工具和独立 Mock 业务流程已移除。当前命令以 README 和 `--help` 为准。
+每次运行使用全新目录，保存输入、配置、代码、权重及软件版本，不覆盖真实分析结果。
 
 ## 3. 数据流与核心模块接口规范
 
@@ -105,7 +77,7 @@ project_root/
 | `LayoutCandidate` | `layouts/<layout_id>.json` | `layout_id`、`source`、`wall_segments:[M,2,2]`、楼层/墙类型/构造属性、几何检查、原始模型输出引用 |
 | `DesignCandidate` | `designs/<design_id>.json` | `layout_id`、有名称和单位的设计变量字典、设计材料量/造价、对应分析记录 ID |
 | `FEAResult` | `analyses/<eval_id>.json` | `status`、`solver`、`solver_version`、`model_hash`、工况、原始响应、`checks:{name,value,limit,ratio,passed}`、耗时、错误说明 |
-| `DecisionEvent` | `events.jsonl` | 决策前状态摘要、候选动作、选中动作、理由、证据、审批、实际效果、预算前后值 |
+| 决策事件 JSON | `events/event_*.json` | 决策前状态摘要、候选动作、选中动作、理由、证据、审批、实际效果、预算前后值 |
 | `RunSummary` | `summary.json` + `metrics.csv` | 最终可行性、最优可行成本、FEA数、总耗时、LLM消耗、人工介入、失败分类、文件引用 |
 
 - **内部规范单位**：长度 `m`，力 `kN`，应力 `MPa`，材料体积 `m³`；金额明确币种。DWG常见 `mm` 与软件自有单位在适配边界转换，所有转换写测试。
@@ -143,12 +115,12 @@ class OptimizationService(Protocol):
     # 封装现有优化器 + CASINO 筛选/排序/在线校准；真实 FEA 全部经 evaluator 记账。
 
 class DecisionPolicy(Protocol):
-    def choose_action(self, state: DesignState,
+    def choose_action(self, state: OptimizationState,
                       allowed_actions: list[str]) -> Decision: ...
     # 无权直接调用 FEA、改数据库或越过人工确认；仅返回决策提案。
 ```
 
-**编排责任**：`DesignEnv` 验证决策合法性、消耗预算、执行审批门控并更新状态；`WorkflowRunner` 串联上述五个模块，支持暂停/恢复和失败重试。`ReportingService` 读取保存后不覆盖的运行文件生成报告，不参与力学计算。
+**当前编排**：`OptimizationEnvironment` 验证动作并推进 `CasinoSession`，所有真实求解经 `AnalysisService` 统一检查预算。仅支持同进程代际续行，不支持磁盘恢复或失败会话重试；Agent 读取预置布局，不在决策循环中自动生成新布局。
 
 ### 3.3 单次状态转移与数据流
 
@@ -157,9 +129,9 @@ ProjectSpec + RoomGraph
   └─ LayoutService → LayoutPool (候选/有效性/工程师批准)
        └─ OptimizationService(CASINO + 优化器)
             └─ AnalysisService(FEA / 工程约束 / 计算记账)
-                 └─ DesignState 更新（性能、失败类型、历史、预算）
+                 └─ OptimizationState 更新（性能、失败类型、历史、预算）
                       └─ DecisionPolicy → 提议动作
-                           └─ DesignEnv 校验/审批 → 执行/回退/终止
+                           └─ OptimizationEnvironment 校验/审批 → 执行/回退/终止
                                 └─ artifacts + summary + report
 ```
 
@@ -167,37 +139,12 @@ ProjectSpec + RoomGraph
 
 ## 4. 渐进式开发里程碑（Codex 必须逐 Phase 验收）
 
-> 以下命令定义**待实现的项目 CLI 和测试入口**，不是声称现在已经可运行。每个 Phase 先提交最小代码，再实现对应测试；不能因商业软件缺席而伪造真实通过。阶段结束记录 `docs/progress.md`（完成项、运行命令、测试结果、阻塞项）。
-
-### Phase 0 — 上游能力审计与环境基线
-
-- **任务**：创建 `pyproject.toml`、`README.md`、`configs/base.yaml`、`scripts/audit_upstream.py`、`docs/upstream_contracts.md`。核实 RC-GNN 的输入输出/特征、候选生成方式、checkpoint；CASINO 的设计变量、优化器、FEA校准调用；现有FEA接口及授权。**只读取现有仓库，不更改论文算法或权重。**
-- **验证命令**：`python scripts/audit_upstream.py --output docs/upstream_contracts.md`；`python -m pytest -q tests/unit/test_upstream_contracts.py`。
-- **通过标准**：能生成接口盘点表和明确的 `KNOWN/UNKNOWN/BLOCKED` 清单；被发现的维度/接口均有代码路径或模型配置证据。缺乏权重或软件时标为阻塞，不填写虚构值。
-
-### Phase 1 — 统一 Schema、单位与最小数据集
-
-- **任务**：实现 `schemas/{project,graph,layout,analysis,state}.py`、`io/{load_case,artifact_store}.py`、`scripts/make_dummy_case.py`；建立 `toy_01`（例如4房间、2种合法候选布置、少量设计变量及约束），与真实模型维度分开标注。
-- **验证命令**：`python scripts/make_dummy_case.py --out data/examples/toy_01`；`python -m pytest -q tests/unit/test_schemas.py tests/unit/test_units.py`。
-- **通过标准**：JSON/graph 保存—加载一致；缺失单位、非法 `edge_index`、不合法墙线/校核结果被拒绝；无真实模型也可运行。
-
-### Phase 2 — Mock 物理闭环与状态机
-
-- **任务**：实现 `adapters/fea/mock.py`、`envs/design_env.py`、`workflows/{runner,state_machine,approval}.py`、`agents/{scripted_policy,fixed_policy}.py`；Mock FEA 为确定性函数，设置可预测的“某布局不可行、切换后可行”场景。
-- **验证命令**：`python -m struct_agent.cli run-case --case data/examples/toy_01 --solver mock --policy scripted --budget-fea 10`；`python -m pytest -q tests/integration/test_mock_workflow.py`。
-- **通过标准**：生成 `manifest.json`、`events.jsonl`、`summary.json`；可模拟“优化→评价→继续/切换→终止”；预算不超支；求解错误不会被计作结构不安全；重跑同一种子轨迹一致。
-
-### Phase 3 — 真实 RC-GNN / CASINO / FEA 适配与最小实证闭环
-
-- **任务**：实现 `adapters/{rcgnn,casino}.py`、`adapters/fea/real.py`、`services/{layout,optimization,analysis}.py`；复用上游模型与现有分析程序，保存一份**已验证算例的参考计算结果**，供后续检查改动是否影响计算。优化器和CASINO的FEA调用统一穿过 `AnalysisService`。
-- **验证命令**：`python -m pytest -q tests/integration/test_real_adapters.py -m real`；`python -m struct_agent.cli run-case --case data/processed/case_001 --solver real --policy scripted --budget-fea 20`。
-- **通过标准**：在具备权重/求解器的机器上，RC-GNN输出能转换为合法候选，CASINO调用真实FEA并取得有效校核数据；存在**一次真实评价后的明确续作（继续优化或更换预置布局）与二次真实评价**；关键结构计算与上游已验证脚本一致。若未接入真实FEA，则 **Phase 3 未完成**。
-- **待确认**：`[TODO: 待确认：真实 solver 首选、许可证/接口、一次求解耗时、FEA覆盖的校核项、优化预算最小规模]`。
+> 当前为 Phase 4。早期能力审计、数据校验及工具迁移已完成基础实现；独立 Mock 业务流程及其专用测试已删除，保留的合成测试继续验证真实接口的预算、审批和异常处理。后续阶段仍是研究计划，不表示功能已实现。变更和验证记录写入本地 Git 提交说明。
 
 ### Phase 4 — 决策策略与双层协同实验
 
 - **任务**：实现 `agents/{rule_policy,llm_policy,proposed}.py`、`evaluation/metrics.py`；先用规则策略跑通 `CONTINUE_OPTIMIZATION` 与 `SWITCH_LAYOUT`，再接入基础LLM策略与拟研究的状态/历史/预算感知策略。加入动作后实际收益记录和状态回放。
-- **验证命令**：`python -m pytest -q tests/unit/test_policy.py tests/integration/test_decision_loop.py`；`python -m struct_agent.cli run-case --case data/processed/case_001 --solver real --policy rules --budget-fea 20`。
+- **验证命令**：`.venv/Scripts/python.exe -m pytest -q tests/unit/test_llm_policy.py tests/unit/test_optimization_env.py tests/unit/test_comparison.py`；`.venv/Scripts/python.exe -m pytest -q --run-real`。真实运行参数见 `docs/phase4_agent.md`。
 - **通过标准**：各策略共享相同候选集、评价器和预算；能复现一次“固定布置继续优化”和一次“切换布局”路径，决策证据可追踪；`REPAIR_MODEL` 与 `SWITCH_LAYOUT` 不混淆。
 
 ### Phase 5 — Agent 交互与 Human-in-the-Loop
@@ -245,7 +192,7 @@ ProjectSpec + RoomGraph
 
 ```yaml
 policy:
-  name: proposed   # scripted(仅测试) | fixed | fixed_restart | rules | llm | proposed
+  name: proposed   # fixed | fixed_restart | rules | llm | proposed
   use_engineering_features: true
   use_action_history: true
   use_budget_awareness: true

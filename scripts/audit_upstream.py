@@ -77,7 +77,7 @@ def report(root: Path) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
-    parser.add_argument("--output", type=Path, default=Path("docs/upstream_contracts.md"))
+    parser.add_argument("--output", type=Path, default=Path("outputs/reports/upstream_audit.md"))
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(report(args.source), encoding="utf-8")

@@ -1,12 +1,13 @@
 import hashlib
 import json
 from pathlib import Path
+import sys
 
 import pytest
 from pydantic import ValidationError
 
 from struct_agent.io.case import load_generation_case
-from struct_agent.cli import load_assets
+from struct_agent.cli import load_assets, main
 
 
 def test_case_loader_checks_input_identity(tmp_path: Path) -> None:
@@ -46,3 +47,29 @@ def test_weight_loading_does_not_require_historical_drawings(tmp_path: Path) -> 
     assert load_assets(config, names=("rc_fold_0",)) == {"rc_fold_0": weight}
     with pytest.raises(ValueError, match="missing rc_fold_1"):
         load_assets(config, names=("rc_fold_1",))
+
+
+@pytest.mark.parametrize(("arguments", "expected"), [
+    (["--help"], ("generate", "optimize")),
+    (["generate", "--help"], ("--dxf", "--category", "--case-config", "--assets", "--run", "--seed")),
+    (["optimize", "--help"], ("--layout", "--rooms", "--spec", "--budget-fea",
+                              "--initial-design", "--generations-per-step", "--use-surrogate")),
+])
+def test_cli_keeps_real_commands(arguments: list[str], expected: tuple[str, ...],
+                                monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(sys, "argv", ["structloop", *arguments])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert all(option in output for option in expected)
+    assert "run-case" not in output and "--approve-mock-layout" not in output
+
+
+def test_cli_rejects_removed_mock_workflow(monkeypatch: pytest.MonkeyPatch,
+                                          capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(sys, "argv", ["structloop", "run-case"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "invalid choice: 'run-case'" in capsys.readouterr().err
