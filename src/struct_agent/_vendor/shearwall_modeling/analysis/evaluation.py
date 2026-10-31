@@ -24,7 +24,9 @@ class AnalysisResultBuilder:
         beam_case_forces = {case_name: case_result.get('beam_forces', {}) for case_name, case_result in basic_case_result.items()}
         wall_case_forces = {case_name: case_result.get('wall_forces', {}) for case_name, case_result in basic_case_result.items()}
         uls_result = self.uls_analyzer.run(beam_case_forces=beam_case_forces, wall_case_forces=wall_case_forces)
-        return self._compose_snapshot(rsa_result, uls_result.beam_forces_by_combo, uls_result.wall_forces_by_combo, uls_result.wall_metrics, uls_result.beam_metrics)
+        result=self._compose_snapshot(rsa_result, uls_result.beam_forces_by_combo, uls_result.wall_forces_by_combo, uls_result.wall_metrics, uls_result.beam_metrics)
+        result.compound_forces_by_case={name:case['compound_forces'] for name,case in basic_case_result.items()}
+        return result
 
     def _compose_snapshot(self, rsa_result: ResponseSpectrumCaseResult, beam_forces_by_combo, wall_forces_by_combo, wall_uls_metrics, beam_uls_metrics) -> AnalysisResult:
         return AnalysisResult(eigen_values=rsa_result.eigen_values, modal_periods=rsa_result.modal_periods, modal_summary=rsa_result.modal_summary, story_weights=rsa_result.story_weights, direction_responses=rsa_result.direction_responses, beam_forces_by_combo=beam_forces_by_combo, wall_forces_by_combo=wall_forces_by_combo, wall_uls_metrics=wall_uls_metrics, beam_uls_metrics=beam_uls_metrics)

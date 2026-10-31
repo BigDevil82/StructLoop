@@ -56,5 +56,7 @@ def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, anal
                 combo_design_shear_n=combo_design_shear,
                 control_combo_type=metric.shear_control_combo_type, shear_passed=metric.is_shear_pressure_passed,
                 reinforcement_checked=result is not None, reinforcement_passed=result.is_passed if result else None,
+                compound_section_id=result.compound_section_id if kind=='wall' else None,
+                shared_wall_ids=result.shared_wall_ids if kind=='wall' else (),
                 reinforcement_messages=tuple(result.messages) if result else ()))
     return tuple(rows)

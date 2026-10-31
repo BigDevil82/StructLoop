@@ -1,10 +1,12 @@
 import logging
+from itertools import product
 from ..analysis.results import AnalysisResult
 from ..builders.base import ModelBuildResult
 from ..core.config import ModelConfig
 from .constants import CONCRETE_COMPRESSIVE_STRENGTH_MPA
-from .results import BeamDesignDemand, WallDesignDemand
+from .results import BeamDesignDemand, WallDesignDemand, CompoundWallDesignDemand
 from ..analysis.uls_combinations import DEFAULT_COMBINATIONS
+from ..geometry.wall_piers import compound_wall_sections
 
 class DesignDemandExtractor:
 
@@ -19,6 +21,29 @@ class DesignDemandExtractor:
         self.seismic_combos = {c.name for c in DEFAULT_COMBINATIONS if c.type == 'Seismic'}
         combined_beams = self._combine_beam_demands(analysis_result.beam_forces_by_combo)
         combined_walls = self._combine_wall_demands(analysis_result.wall_forces_by_combo)
+        self.compound_demands=[]
+        for section in compound_wall_sections(self.build_result.wall_story_element_units):
+            key=(section.section_id,section.story)
+            cases=[]
+            for combo in DEFAULT_COMBINATIONS:
+                seismic=combo.type=='Seismic'
+                quake=[name for name in combo.factors if name.startswith('Eq')]
+                if seismic:
+                    name=quake[0];factor=combo.factors[name]
+                    if factor<0:continue  # The full component-sign envelope includes both directions.
+                    base=[sum(f*analysis_result.compound_forces_by_case[c][key][i]
+                        for c,f in combo.factors.items() if c!=name) for i in range(3)]
+                    amplitude=analysis_result.compound_forces_by_case[name][key]
+                    # CQC components are peak amplitudes, not a concurrent signed
+                    # N/M pair. Check all adverse signs, labelled as envelopes.
+                    for signs in product((-1,1),repeat=3):
+                        values=tuple(base[i]+signs[i]*factor*amplitude[i] for i in range(3))
+                        cases.append((f'{combo.name}:component_envelope{signs}',*values,True))
+                else:
+                    values=tuple(sum(f*analysis_result.compound_forces_by_case[c][key][i]
+                        for c,f in combo.factors.items()) for i in range(3))
+                    cases.append((combo.name,*values,False))
+            self.compound_demands.append(CompoundWallDesignDemand(section,tuple(cases),self.config.seismic.axial_compression_ratio_limit))
         return (combined_beams, combined_walls)
 
     def _combine_beam_demands(self, beam_forces_by_combo: dict[str, dict[tuple[int, int], tuple[float, float, float]]]) -> list[BeamDesignDemand]:

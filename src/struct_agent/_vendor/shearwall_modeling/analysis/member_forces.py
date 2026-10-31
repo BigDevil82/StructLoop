@@ -2,6 +2,32 @@ import math
 import openseespy.opensees as ops
 from ..builders.base import WallStoryElementUnit
 
+
+def extract_wall_section_resultant(units: tuple[WallStoryElementUnit, ...],
+                                   centroid: tuple[float,float]) -> tuple[float, ...]:
+    """Signed (N,Mx,My,Vx,Vy,T), N/N*m, about one bottom-section centroid.
+
+    Sum element nodal forces BEFORE modal combination. Each panel is visited
+    once; shared-edge nodal contributions are summed, not discarded.
+    """
+    force=[0.]*3;moment=[0.]*3;seen=set()
+    for unit in units:
+        for tag in unit.element_tags:
+            if tag in seen:
+                raise ValueError(f'Duplicate panel in compound section: {tag}')
+            seen.add(tag)
+            values=list(map(float,ops.eleResponse(tag,'forces')))
+            if len(values)!=24 or not all(map(math.isfinite,values)):
+                raise ValueError(f'Invalid MVLEM forces: {tag}')
+            nodes=ops.eleNodes(tag)
+            for local,node in enumerate(nodes[:2]):
+                fx,fy,fz,mx,my,mz=values[6*local:6*local+6]
+                x,y,_=unit.node_coords[node]
+                dx,dy=x-centroid[0],y-centroid[1]
+                force=[force[0]+fx,force[1]+fy,force[2]+fz]
+                moment=[moment[0]+mx+dy*fz,moment[1]+my-dx*fz,moment[2]+mz+dx*fy-dy*fx]
+    return (force[2],moment[0],moment[1],force[0],force[1],moment[2])
+
 def extract_beam_force_tuple(element_tag: int) -> tuple[float, float, float]:
     """Return signed section-diagram (My_i, My_j, Vz_i), N*m/N.
 

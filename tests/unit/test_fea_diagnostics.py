@@ -75,7 +75,7 @@ def evidence(*, negative_wall: bool = False) -> tuple[MemberDiagnostic, ...]:
     if negative_wall:
         analysis.wall_forces_by_combo["EQ"][0, 1] = (0., 0., -14300.)
         analysis.wall_uls_metrics[0].shear_checks['EQ'] = (-14300.,.15)
-    design = NS(wall_results=[NS(wall_id=0, story=1, is_passed=False, messages=["section_insufficient"])],
+    design = NS(wall_results=[NS(wall_id=0, story=1, is_passed=False, messages=["section_insufficient"],compound_section_id=None,shared_wall_ids=())],
         beam_results=[NS(beam_id=1, story=1, is_passed=False, messages=["beam_shear_section_insufficient"])])
     return collect_members(layout, context, analysis, design, beta_c=1., combination_types={"EQ": "Seismic"})
 

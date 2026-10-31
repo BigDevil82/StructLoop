@@ -11,6 +11,9 @@ import math
 
 from ..builders.base import WallStoryElementUnit
 from ..core.domain import BeamMember, PlanMember, Point2D
+from shapely.geometry import LineString
+from shapely.geometry.base import BaseGeometry
+from shapely.ops import unary_union
 
 
 @dataclass(frozen=True)
@@ -145,4 +148,74 @@ def beam_spans(beams: list[BeamMember], walls: list[PlanMember]) -> list[BeamSpa
                     (chain.member.length*w.length) >= math.cos(math.pi/6)-1e-8 for w in left+right)
                 result.append(BeamSpan(tuple(b.m_id for b in parts),start,end,bool(left and right and aligned)))
                 start, parts = end, []
+    return result
+
+
+@dataclass(frozen=True)
+class CompoundWallSection:
+    """A local connected section, global XY metres; no FE elements are changed."""
+    section_id: int
+    story: int
+    units: tuple[WallStoryElementUnit, ...]
+    polygon: BaseGeometry
+    boundary: BaseGeometry
+    kind: str
+
+    @property
+    def wall_ids(self) -> tuple[int, ...]:
+        return tuple(u.wall_id for u in self.units)
+
+    @property
+    def centroid(self) -> tuple[float, float]:
+        return (self.polygon.centroid.x,self.polygon.centroid.y)
+
+
+def compound_wall_sections(units: list[WallStoryElementUnit]) -> list[CompoundWallSection]:
+    """Attach column-like short limbs (length/thickness<=3) to their host wall.
+
+    Shared FE edge nodes are required. Do not collect the entire connected wall
+    network: each short limb selects its longest nonparallel adjoining host.
+    Collinear piers have already been assembled, without bridging openings.
+    """
+    stories: dict[int,list[WallStoryElementUnit]] = defaultdict(list)
+    for unit in units:
+        stories[unit.story].append(unit)
+    result = []
+    for story,parts in sorted(stories.items()):
+        parent = list(range(len(parts)))
+        active: set[int] = set()
+        def find(i: int) -> int:
+            while parent[i]!=i:
+                i=parent[i]
+            return i
+        for i,u in enumerate(parts):
+            if u.member.length/u.thickness>3.+1e-8:
+                continue
+            active.add(i)
+            ux,uy=u.member.end.x-u.member.start.x,u.member.end.y-u.member.start.y
+            hosts=[]
+            for j,v in enumerate(parts):
+                vx,vy=v.member.end.x-v.member.start.x,v.member.end.y-v.member.start.y
+                connected=bool(set(u.bottom_nodes)&set(v.bottom_nodes)) and bool(set(u.top_nodes)&set(v.top_nodes))
+                if i!=j and connected and abs(ux*vy-uy*vx)>1e-8*u.member.length*v.member.length:
+                    hosts.append(j)
+            if hosts:
+                host=max(hosts,key=lambda j:(parts[j].member.length,-parts[j].wall_id))
+                parent[find(i)]=find(host)
+        roots={find(i) for i in active}
+        for root in sorted(roots):
+            members=tuple(sorted((u for i,u in enumerate(parts) if find(i)==root),key=lambda u:u.wall_id))
+            rectangles=[];boundaries=[]
+            for u in members:
+                line=LineString([(u.member.start.x,u.member.start.y),(u.member.end.x,u.member.end.y)])
+                rectangles.append(line.buffer(u.thickness/2,cap_style=2))
+                hc=min(max(2*u.thickness,.15*u.member.length),u.member.length/2)
+                for a,b in ((0.,hc),(u.member.length-hc,u.member.length)):
+                    end_zone=LineString([line.interpolate(a),line.interpolate(b)])
+                    boundaries.append(end_zone.buffer(u.thickness/2,cap_style=2))
+            polygon=unary_union(rectangles)
+            if polygon.geom_type!='Polygon' or polygon.interiors:
+                raise ValueError(f'Disconnected/holed compound wall {[u.wall_id for u in members]}')
+            result.append(CompoundWallSection(min(u.wall_id for u in members),story,members,polygon,
+                unary_union(boundaries).intersection(polygon),'compound' if len(members)>1 else 'column'))
     return result

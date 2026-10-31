@@ -45,3 +45,33 @@ def test_t_wall_assembly_retains_all_mesh_nodes_elements_and_mass(spec: ProjectS
             assert ops.nodeMass(build.master_nodes[i],1) == pytest.approx(build.floor_self_masses[i]+build.floor_load_masses[i])
     finally:
         ops.wipe()
+
+
+@pytest.mark.parametrize('split',[False,True])
+def test_real_compound_cut_balances_eccentric_vertical_load(spec: ProjectSpec,design: DesignCandidate,split: bool) -> None:
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import compound_wall_sections
+    from struct_agent._vendor.shearwall_modeling.analysis.member_forces import extract_wall_section_resultant
+    params=replace(native_params(design,spec),N=3)
+    config=build_model_config_from_params(params,num_modes=3)
+    walls=[PlanMember(0,'shearwall',Point2D(0.,0.),Point2D(2.,0.)),
+           PlanMember(2,'shearwall',Point2D(2.,0.),Point2D(2.,.4))]
+    if split:
+        walls=[PlanMember(0,'shearwall',Point2D(0.,0.),Point2D(1.,0.)),
+               PlanMember(1,'shearwall',Point2D(1.,0.),Point2D(2.,0.)),walls[-1]]
+    topology=FEMInput(walls=walls,beams=[],slabs=[[Point2D(0.,0.),Point2D(3.,0.),Point2D(3.,3.),Point2D(0.,3.)]])
+    try:
+        build=MVLEMFrameBuilder(logging.getLogger('test_compound')).build(topology,config)
+        sections=compound_wall_sections(build.wall_story_element_units)
+        top=max((u for u in build.wall_story_element_units if u.wall_id==2),key=lambda u:u.story)
+        loaded=next(n for n in top.top_nodes if abs(ops.nodeCoord(n,2)-.4)<1e-8)
+        ops.timeSeries('Linear',1);ops.pattern('Plain',1,1)
+        ops.load(loaded,0.,0.,-100000.,0.,0.,0.)
+        ops.constraints('Transformation');ops.numberer('RCM');ops.system('UmfPack')
+        ops.test('NormDispIncr',1e-9,20);ops.algorithm('Linear');ops.integrator('LoadControl',1.)
+        ops.analysis('Static');assert ops.analyze(1)==0
+        for section in sections:
+            cx,cy=section.centroid
+            resultant=extract_wall_section_resultant(section.units,section.centroid)
+            assert resultant==pytest.approx((100000.,(.4-cy)*100000.,-(2.-cx)*100000.,0.,0.,0.),rel=1e-7,abs=1e-4)
+    finally:
+        ops.wipe()

@@ -1,18 +1,18 @@
 {
   "purpose": "same_implementation_regression_not_independent_validation",
-  "analysis_signature": "ec75a56f0c2505aae25b559f7e25fe99533a7d2590613a114c6a7664149d043e",
+  "analysis_signature": "ea4c99379faba5a50b3a243ad5d07e00210b5843408a196c74ae6715c59d26a8",
   "inputs": {
     "layout": {
-      "path": "outputs/reference/fea_check_audit_20261030_222619_765832/layout.json",
-      "sha256": "7c1cfc114c5d587629cbeb5f038f1e6ddf46f5570be3e9f06df7f052f24eeb36"
+      "path": "outputs/reference/fea_compound_20261031_002713_874954/layout.json",
+      "sha256": "4d0ac9ccd631b6102a0eedfc617d47783763e1162ab6edb4c11b8e3ce208598c"
     },
     "spec": {
       "path": "configs/residential_12_story.json",
       "sha256": "6b7c7e71f461caf2ecfcdef59ccd08c5c4255b2f0403cc5f3808410b9d35e0e7"
     },
     "analysis": {
-      "path": "outputs/reference/fea_check_audit_20261030_222619_765832/analyses/eval_00001.json",
-      "sha256": "4e679ffc02c3e4fd93a0ecd400e986eb5901a3f9b3b610864c98705c9c8a6264"
+      "path": "outputs/reference/fea_compound_20261031_002713_874954/analyses/eval_00001.json",
+      "sha256": "3fe7291b2db8252690299be671f0bd17e523cffa5360b444c16b6c8fa7e846fc"
     }
   }
 }

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from ..geometry.wall_piers import CompoundWallSection
 
 @dataclass(frozen=True)
 class BeamDesignDemand:
@@ -30,6 +31,44 @@ class WallDesignDemand:
     load_cases: tuple[tuple[float, float, float, float, bool], ...] = ()
     seismic: bool = False
     shear_limit: float = .20
+
+
+@dataclass(frozen=True)
+class CompoundWallDesignDemand:
+    section: CompoundWallSection
+    # label, N (compression positive), Mx/My (N*m), seismic.
+    load_cases: tuple[tuple[str,float,float,float,bool], ...]
+    axial_limit: float
+
+
+@dataclass(frozen=True)
+class SectionEquilibrium:
+    combination: str
+    target_n_mx_my: tuple[float,float,float]
+    resultant_n_mx_my: tuple[float,float,float]
+    relative_error: float
+    max_concrete_strain: float
+    min_steel_strain: float
+    passed: bool
+
+
+@dataclass(frozen=True)
+class CompoundWallReinforcementResult:
+    section_id: int
+    story: int
+    wall_ids: tuple[int,...]
+    kind: str
+    centroid_m: tuple[float,float]
+    area_m2: float
+    boundary_area_m2: float
+    longitudinal_steel_mm2: float
+    boundary_ratio: float
+    distributed_ratio: float
+    axial_ratio: float
+    axial_limit: float
+    is_passed: bool
+    checks: tuple[SectionEquilibrium,...]
+    messages: tuple[str,...]
 
 @dataclass(frozen=True)
 class MaterialUsage:
@@ -71,6 +110,8 @@ class WallReinforcementResult:
     is_over_reinforced: bool
     is_section_insufficient: bool
     messages: list[str] = field(default_factory=list)
+    compound_section_id: int | None = None
+    shared_wall_ids: tuple[int,...] = ()
 
     @property
     def is_passed(self) -> bool:
@@ -80,6 +121,7 @@ class WallReinforcementResult:
 class ReinforcementDesignSummary:
     beam_results: list[BeamReinforcementResult]
     wall_results: list[WallReinforcementResult]
+    compound_results: list[CompoundWallReinforcementResult] = field(default_factory=list)
 
     @property
     def total_concrete_kg(self) -> float:
@@ -99,4 +141,4 @@ class ReinforcementDesignSummary:
 
     @property
     def is_passed(self) -> bool:
-        return not self.failed_beams and (not self.failed_walls)
+        return not self.failed_beams and not self.failed_walls and all(r.is_passed for r in self.compound_results)

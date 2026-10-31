@@ -85,3 +85,95 @@ def test_opposite_panel_modal_forces_cancel_before_cqc(monkeypatch: pytest.Monke
             panel_modes[i].append(member_forces.extract_wall_force_tuple(item)[2])
     assert cqc(grouped_modes, [1.,4.], [.05,.05], [1.,1.]) == 0.
     assert sum(cqc(v, [1.,4.], [.05,.05], [1.,1.]) for v in panel_modes) > 40.
+
+
+def test_compound_geometry_shares_boundary_and_does_not_bridge_an_opening() -> None:
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import compound_wall_sections
+    host=unit(wall(1,(0.,0.),(2.,0.)),1,(1,2))
+    limb=unit(wall(2,(2.,0.),(2.,.2)),2,(2,3))
+    far=unit(wall(3,(2.01,0.),(2.01,.2)),3,(4,5))
+    result=compound_wall_sections([host,limb,far])
+    together=next(s for s in result if 1 in s.wall_ids)
+    assert together.wall_ids==(1,2) and together.kind=='compound'
+    assert together.polygon.area==pytest.approx(.43)
+    assert together.boundary.area<together.polygon.area
+    assert next(s for s in result if 3 in s.wall_ids).kind=='column'
+
+
+def test_compound_resultants_include_both_moments_and_reference_translation(monkeypatch: pytest.MonkeyPatch) -> None:
+    from struct_agent._vendor.shearwall_modeling.analysis.member_forces import extract_wall_section_resultant
+    host=unit(wall(1,(0.,0.),(2.,0.)),1,(1,2))
+    limb=unit(wall(2,(2.,0.),(2.,.5)),2,(2,3))
+    monkeypatch.setattr(member_forces.ops,'eleResponse',lambda tag,*args:([1.,0.,10.,0.,0.,0.] if tag==1 else [2.,0.,20.,0.,0.,0.])*2+[0.]*12)
+    monkeypatch.setattr(member_forces.ops,'eleNodes',lambda tag:[1,2,12,11] if tag==1 else [2,3,13,12])
+    a=extract_wall_section_resultant((host,limb),(1.,0.))
+    b=extract_wall_section_resultant((host,limb),(3.,3.))
+    assert a==pytest.approx((60.,10.,-40.,6.,0.,-1.))
+    assert b==pytest.approx((60.,10.-3*60.,-40.+2*60.,6.,0.,-1.+3*6.))
+    with pytest.raises(ValueError,match='Duplicate panel'):
+        extract_wall_section_resultant((host,host),(1.,0.))
+
+
+def test_compound_membership_and_area_are_invariant_to_host_subdivision() -> None:
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import compound_wall_sections
+    host=unit(wall(1,(0.,0.),(2.,0.)),1,(1,2))
+    limb=unit(wall(3,(2.,0.),(2.,.2)),3,(2,3))
+    whole=compound_wall_sections([host,limb])[0]
+    pieces=assemble_wall_units([unit(wall(1,(0.,0.),(1.,0.)),1,(1,4)),unit(wall(2,(1.,0.),(2.,0.)),2,(4,2)),limb])
+    split=compound_wall_sections(pieces)[0]
+    assert split.polygon.symmetric_difference(whole.polygon).area<1e-10
+
+
+def test_compound_design_converges_with_refined_integration_and_counts_shared_steel_once() -> None:
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import compound_wall_sections
+    from struct_agent._vendor.shearwall_modeling.design.results import CompoundWallDesignDemand
+    from struct_agent._vendor.shearwall_modeling.design.wall import design_compound_section
+    from struct_agent._vendor.shearwall_modeling.design.constants import ReinforcementDesignConstants
+    from struct_agent._vendor.shearwall_modeling.core.config import MaterialConfig
+    section=compound_wall_sections([unit(wall(1,(0.,0.),(2.,0.)),1,(1,2)),unit(wall(2,(2.,0.),(2.,.2)),2,(2,3))])[0]
+    demand=CompoundWallDesignDemand(section,(('biaxial',400000.,10000.,100000.,True),),.5)
+    coarse=design_compound_section(demand,MaterialConfig('C30'),ReinforcementDesignConstants(),spacing_mm=40.)
+    fine=design_compound_section(demand,MaterialConfig('C30'),ReinforcementDesignConstants(),spacing_mm=20.)
+    assert coarse.is_passed and fine.is_passed
+    assert fine.longitudinal_steel_mm2==pytest.approx(coarse.longitudinal_steel_mm2,rel=.02)
+    expected=coarse.boundary_ratio*section.boundary.area*1e6+.0025*(section.polygon.area-section.boundary.area)*1e6
+    assert coarse.longitudinal_steel_mm2==pytest.approx(expected)
+    assert max(c.relative_error for c in fine.checks)<1e-6
+
+
+def test_standalone_short_limb_requires_column_review_even_when_section_balances() -> None:
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import compound_wall_sections
+    from struct_agent._vendor.shearwall_modeling.design.results import CompoundWallDesignDemand
+    from struct_agent._vendor.shearwall_modeling.design.wall import design_compound_section
+    from struct_agent._vendor.shearwall_modeling.design.constants import ReinforcementDesignConstants
+    from struct_agent._vendor.shearwall_modeling.core.config import MaterialConfig
+    section=compound_wall_sections([unit(wall(1,(0.,0.),(.4,0.)),1,(1,2))])[0]
+    result=design_compound_section(CompoundWallDesignDemand(section,(('gravity',10000.,0.,0.,False),),.5),
+        MaterialConfig('C30'),ReinforcementDesignConstants())
+    assert all(check.passed for check in result.checks)
+    assert not result.is_passed
+    assert 'column_stability_and_detailing_review_required' in result.messages
+
+
+def test_compound_cqc_envelope_checks_all_independent_component_signs() -> None:
+    from types import SimpleNamespace as NS
+    from struct_agent._vendor.shearwall_modeling.design.extractor import DesignDemandExtractor
+    from struct_agent._vendor.shearwall_modeling.analysis.uls_combinations import DEFAULT_COMBINATIONS
+    host=unit(wall(1,(0.,0.),(2.,0.)),1,(1,2))
+    limb=unit(wall(2,(2.,0.),(2.,.2)),2,(2,3))
+    names={name for combo in DEFAULT_COMBINATIONS for name in combo.factors}
+    cases={name:{(1,1):(10.,20.,30.,0.,0.,0.) if name.startswith('Eq') else (100.,0.,0.,0.,0.,0.)} for name in names}
+    extractor=DesignDemandExtractor(NS(wall_story_element_units=[host,limb]),NS(seismic=NS(axial_compression_ratio_limit=.5)),NS())
+    extractor._combine_beam_demands=lambda _:[]
+    extractor._combine_wall_demands=lambda _:[]
+    extractor.extract(NS(beam_uls_metrics=[],wall_uls_metrics=[],beam_forces_by_combo={},wall_forces_by_combo={},compound_forces_by_case=cases))
+    loads=extractor.compound_demands[0].load_cases
+    for combo in DEFAULT_COMBINATIONS:
+        quake=[name for name in combo.factors if name.startswith('Eq')]
+        if not quake or combo.factors[quake[0]]<0:continue
+        rows=[row for row in loads if row[0].startswith(combo.name+':')]
+        gravity=sum(f*100. for name,f in combo.factors.items() if not name.startswith('Eq'))
+        amplitude=combo.factors[quake[0]]
+        assert len(rows)==8
+        assert {tuple(round((value-base)/scale) for value,base,scale in zip(row[1:4],(gravity,0.,0.),(10.*amplitude,20.*amplitude,30.*amplitude))) for row in rows}=={
+            (n,mx,my) for n in (-1,1) for mx in (-1,1) for my in (-1,1)}

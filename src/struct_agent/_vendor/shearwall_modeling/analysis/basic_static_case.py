@@ -1,12 +1,14 @@
 import openseespy.opensees as ops
 from ..builders.base import AnalysisModelContext
-from .member_forces import extract_beam_force_tuple, extract_wall_force_tuple
+from .member_forces import extract_beam_force_tuple, extract_wall_force_tuple, extract_wall_section_resultant
+from ..geometry.wall_piers import compound_wall_sections
 from .results import ResponseSpectrumCaseResult
 
 class LinearSuperpositionAnalyzer:
 
     def __init__(self, context: AnalysisModelContext, wind_basic_pressure_kpa: float=0.5, wind_shape_coeff: float=1.3, wind_vibration_coeff: float=1.0, wind_importance_coeff: float=1.0, wind_height_exponent: float=0.16, wind_ref_height_m: float=10.0, wind_min_height_coeff: float=1.0):
         self.context = context
+        self.compound_sections=compound_wall_sections(context.wall_story_element_units)
         self.basic_cases = ['Dead', 'Live', 'WindX', 'WindY']
         self.wind_basic_pressure_kpa = max(float(wind_basic_pressure_kpa), 0.0)
         self.wind_shape_coeff = max(float(wind_shape_coeff), 0.0)
@@ -92,6 +94,7 @@ class LinearSuperpositionAnalyzer:
     def _extract_case_forces(self) -> tuple[dict[tuple[int, int], tuple[float, float, float]], dict[tuple[int, int], tuple[float, float, float]]]:
         beam_forces = {(unit.beam_id, unit.story): extract_beam_force_tuple(unit.element_tag) for unit in self.context.beam_element_units}
         wall_forces = {(unit.wall_id, unit.story): extract_wall_force_tuple(unit) for unit in self.context.wall_story_element_units}
+        self.compound_forces={(s.section_id,s.story):extract_wall_section_resultant(s.units,s.centroid) for s in self.compound_sections}
         return (beam_forces, wall_forces)
 
     def _run_static_basic_case(self, case_name: str) -> tuple[dict[tuple[int, int], tuple[float, float, float]], dict[tuple[int, int], tuple[float, float, float]]]:
@@ -124,10 +127,10 @@ class LinearSuperpositionAnalyzer:
         basic_results: dict[str, dict] = {}
         for case in self.basic_cases:
             beam_forces, wall_forces = self._run_static_basic_case(case)
-            basic_results[case] = {'beam_forces': beam_forces, 'wall_forces': wall_forces}
+            basic_results[case] = {'beam_forces': beam_forces, 'wall_forces': wall_forces,'compound_forces':self.compound_forces}
         if rsa_result is None:
             raise RuntimeError('rsa_result is required for EqX/EqY basic cases.')
-        basic_results['EqX'] = {'beam_forces': rsa_result.seismic_beam_forces_by_dir['X'], 'wall_forces': rsa_result.seismic_wall_forces_by_dir['X']}
-        basic_results['EqY'] = {'beam_forces': rsa_result.seismic_beam_forces_by_dir['Y'], 'wall_forces': rsa_result.seismic_wall_forces_by_dir['Y']}
+        basic_results['EqX'] = {'beam_forces': rsa_result.seismic_beam_forces_by_dir['X'], 'wall_forces': rsa_result.seismic_wall_forces_by_dir['X'],'compound_forces':rsa_result.seismic_compound_forces_by_dir['X']}
+        basic_results['EqY'] = {'beam_forces': rsa_result.seismic_beam_forces_by_dir['Y'], 'wall_forces': rsa_result.seismic_wall_forces_by_dir['Y'],'compound_forces':rsa_result.seismic_compound_forces_by_dir['Y']}
         return basic_results
 

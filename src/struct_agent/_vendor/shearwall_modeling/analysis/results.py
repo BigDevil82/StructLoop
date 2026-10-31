@@ -74,7 +74,6 @@ class OverallCheckResult:
         return self.is_torsion_passed and self.is_shear_weight_passed and self.is_stiffness_passed and self.is_interstory_drift_passed and self.is_period_ratio_passed and self.is_wall_axial_passed and self.is_wall_shear_pressure_passed and self.is_beam_shear_pressure_passed
 
 @dataclass
-@dataclass
 class AnalysisResult:
     eigen_values: list[float]
     modal_periods: list[float]
@@ -85,6 +84,8 @@ class AnalysisResult:
     wall_forces_by_combo: dict[str, dict[tuple[int, int], tuple[float, float, float]]] = field(default_factory=dict)
     wall_uls_metrics: list[WallULSMetric] = field(default_factory=list)
     beam_uls_metrics: list[BeamULSMetric] = field(default_factory=list)
+    # Signed static effects and nonnegative, group-before-CQC seismic amplitudes.
+    compound_forces_by_case: dict[str,dict[tuple[int,int],tuple[float,...]]] = field(default_factory=dict)
 
 @dataclass
 class ResponseSpectrumCaseResult:
@@ -95,6 +96,7 @@ class ResponseSpectrumCaseResult:
     direction_responses: dict[str, DirectionResponse]
     seismic_beam_forces_by_dir: dict[str, dict[tuple[int, int], tuple[float, float, float]]] = field(default_factory=dict)
     seismic_wall_forces_by_dir: dict[str, dict[tuple[int, int], tuple[float, float, float]]] = field(default_factory=dict)
+    seismic_compound_forces_by_dir: dict[str,dict[tuple[int,int],tuple[float,...]]] = field(default_factory=dict)
 
 def init_direction_check_result(response: DirectionResponse) -> DirectionCheckResult:
     return DirectionCheckResult(direction=response.direction, metrics=response.metrics, is_torsion_passed=False, is_shear_weight_passed=False, is_stiffness_passed=False, is_period_ratio_passed=False, max_interstory_drift_ratio=0.0, max_interstory_drift_story=0, interstory_drift_limit=0.0, is_interstory_drift_passed=False)

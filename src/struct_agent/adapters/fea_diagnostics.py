@@ -16,6 +16,8 @@ from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import LayoutCandidate
 from .fea_member_evidence import collect_members
 from struct_agent._vendor.shearwall_modeling.parametric.summary import summarize_native
+from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import compound_wall_sections
+from shapely.geometry import mapping
 
 
 class DiagnosticEvidenceError(RuntimeError):
@@ -54,7 +56,11 @@ def analyze_detailed(topology: FEMInput, params: ParametricModelParams, cfg: Dat
             write_json(directory / "checks.json", {"overall": asdict(overall),
                 "directions": {k: asdict(v) for k, v in directions.items()},
                 "design_failed_beams": [asdict(x) for x in design.failed_beams],
-                "design_failed_walls": [asdict(x) for x in design.failed_walls]})
+                "design_failed_walls": [asdict(x) for x in design.failed_walls],
+                "compound_sections": [asdict(x) for x in design.compound_results],
+                "compound_geometry": [{"section_id":s.section_id,"story":s.story,"wall_ids":s.wall_ids,
+                    "polygon":mapping(s.polygon),"boundary":mapping(s.boundary)}
+                    for s in compound_wall_sections(context.wall_story_element_units)]})
         except Exception as exc:
             raise DiagnosticEvidenceError(f"{type(exc).__name__}: {exc}") from exc
         return summary

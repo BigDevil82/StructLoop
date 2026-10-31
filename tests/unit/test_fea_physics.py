@@ -68,12 +68,12 @@ def test_reinforcement_pipeline_checks_every_modeled_wall() -> None:
     import logging
     from struct_agent._vendor.shearwall_modeling.design.pipeline import ReinforcementDesignPipeline
     checked = []
-    pipeline = ReinforcementDesignPipeline(NS(), NS(), NS(resolve_story_profiles=lambda: [NS(story=1, material=NS())]), logging.getLogger('test'))
-    demands = [NS(story=1, length_m=.1), NS(story=1, length_m=1.)]
-    pipeline.extractor = NS(extract=lambda result: ([], demands))
+    pipeline = ReinforcementDesignPipeline(NS(), NS(wall_uls_metrics=[]), NS(resolve_story_profiles=lambda: [NS(story=1, material=NS())]), logging.getLogger('test'))
+    demands = [NS(wall_id=1,story=1, length_m=.1), NS(wall_id=2,story=1, length_m=1.)]
+    pipeline.extractor = NS(extract=lambda result: ([], demands),compound_demands=[])
     def design(demand: NS, material: NS) -> NS:
         checked.append(demand.length_m)
-        return NS(is_passed=False)
+        return NS(wall_id=demand.wall_id,story=1,is_passed=False)
     pipeline.wall_designer = NS(design=design)
     result = pipeline.run()
     assert checked == [.1, 1.] and len(result.wall_results) == 2
@@ -161,7 +161,7 @@ def test_low_damping_spectrum_increases_and_invalid_spectra_fail() -> None:
 
 def test_rsa_averages_signed_modes_and_stiffness_uses_metres(monkeypatch: pytest.MonkeyPatch) -> None:
     from struct_agent._vendor.shearwall_modeling.analysis.response_spectrum import ResponseSpectrumAnalyzer
-    context=NS(bbox=(0.,1.,0.,1.),num_stories=1,story_heights=[3.],config=NS(seismic=NS(damping_ratio=.05,combination_method='CQC')))
+    context=NS(bbox=(0.,1.,0.,1.),wall_story_element_units=[],num_stories=1,story_heights=[3.],config=NS(seismic=NS(damping_ratio=.05,combination_method='CQC')))
     analyzer=ResponseSpectrumAnalyzer(context)
     def one_mode(**kw: object) -> None:
         kw['modal_drift_center'][0].append(.1)
@@ -195,7 +195,7 @@ def test_physical_span_and_capacity_design_are_shared_across_beam_subdivisions()
 
 def test_insufficient_modal_mass_cannot_produce_a_pass() -> None:
     from struct_agent._vendor.shearwall_modeling.analysis.response_spectrum import ResponseSpectrumAnalyzer
-    analyzer=ResponseSpectrumAnalyzer(NS(bbox=(0.,1.,0.,1.)))
+    analyzer=ResponseSpectrumAnalyzer(NS(bbox=(0.,1.,0.,1.),wall_story_element_units=[]))
     props={'partiMassRatiosMX':[40.,40.],'partiMassRatiosMY':[50.,45.],'partiMassRatiosRMZ':[1.,1.]}
     with pytest.raises(ValueError,match='90 percent'):
         analyzer.extract_modal_summary([1.,.5],props)
@@ -215,7 +215,7 @@ def test_mode_extraction_increases_until_both_directions_have_enough_mass(monkey
             'partiMassRatiosMY':[45. if n==2 else 20.]*n,'partiMassRatiosRMZ':[.1]*n}
     monkeypatch.setattr(response_spectrum.ops,'eigen',eigen)
     monkeypatch.setattr(response_spectrum.ops,'modalProperties',properties)
-    context=NS(bbox=(0.,1.,0.,1.),num_stories=3,config=NS(num_modes=2,seismic=NS(periods=[0.,6.])),logger=NS(info=lambda *args:None))
+    context=NS(bbox=(0.,1.,0.,1.),wall_story_element_units=[],num_stories=3,config=NS(num_modes=2,seismic=NS(periods=[0.,6.])),logger=NS(info=lambda *args:None))
     values,_,summary=ResponseSpectrumAnalyzer(context).run_modal_case()
     assert calls==[2,5] and len(values)==5
     assert summary.mass_participation_x_pct==100. and summary.mass_participation_y_pct==100.
@@ -223,7 +223,7 @@ def test_mode_extraction_increases_until_both_directions_have_enough_mass(monkey
 
 def test_torsion_checks_floor_displacement_in_addition_to_story_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     from struct_agent._vendor.shearwall_modeling.analysis.response_spectrum import ResponseSpectrumAnalyzer
-    context=NS(bbox=(0.,1.,0.,1.),num_stories=2,story_heights=[3.,3.],config=NS(seismic=NS(damping_ratio=.05,combination_method='CQC')))
+    context=NS(bbox=(0.,1.,0.,1.),wall_story_element_units=[],num_stories=2,story_heights=[3.,3.],config=NS(seismic=NS(damping_ratio=.05,combination_method='CQC')))
     analyzer=ResponseSpectrumAnalyzer(context)
     def one_mode(**kw: object) -> None:
         for story,values in enumerate(((.3,.12,.12,.3),(-.1,-.3,-.3,-.1))):
@@ -233,3 +233,47 @@ def test_torsion_checks_floor_displacement_in_addition_to_story_drift(monkeypatc
     monkeypatch.setattr(analyzer,'_analyze_mode',one_mode)
     response,_,_=analyzer._run_rsa_analysis(1,'X',[1.],[1000.,1000.])
     assert response.metrics[1].torsion_ratio==pytest.approx(20.)
+
+
+@pytest.mark.parametrize('strain',[.001,-.001])
+def test_section_equilibrium_matches_uniform_compression_and_tension(strain: float) -> None:
+    import numpy as np
+    from struct_agent._vendor.shearwall_modeling.design.wall import section_equilibrium
+    concrete=np.array([[-50.,-100.,20000.],[50.,-100.,20000.],[-50.,100.,20000.],[50.,100.,20000.]])
+    bars=np.array([[-60.,-160.,0.],[60.,-160.,0.],[-60.,160.,0.],[60.,160.,0.]])
+    area=np.full(4,400.)
+    fc=19.1
+    expected_n=(.75*fc*(80000.-1600.) if strain>0 else 0.)+200000*strain*1600.
+    check=section_equilibrium(concrete,bars,area,(expected_n,0.,0.),fc,360.,'uniform')
+    assert check.passed and check.relative_error<1e-7
+    assert check.resultant_n_mx_my==pytest.approx((expected_n,0.,0.),abs=.01)
+
+
+def test_section_equilibrium_rejects_demand_above_axial_capacity() -> None:
+    import numpy as np
+    from struct_agent._vendor.shearwall_modeling.design.wall import section_equilibrium
+    concrete=np.array([[-50.,-100.,20000.],[50.,-100.,20000.],[-50.,100.,20000.],[50.,100.,20000.]])
+    bars=concrete.copy();area=np.full(4,400.)
+    capacity=19.1*(80000-1600)+360*1600
+    assert not section_equilibrium(concrete,bars,area,(1.1*capacity,0.,0.),19.1,360.,'over_capacity').passed
+
+
+def test_biaxial_equilibrium_is_rotation_invariant() -> None:
+    import numpy as np
+    from struct_agent._vendor.shearwall_modeling.design.wall import section_equilibrium
+    concrete=np.array([[-50.,-100.,20000.],[50.,-100.,20000.],[-50.,100.,20000.],[50.,100.,20000.]])
+    bars=np.array([[-60.,-160.,0.],[60.,-160.,0.],[-60.,160.,0.],[60.,160.,0.]])
+    area=np.full(4,400.);fc=19.1
+    def strain(points: np.ndarray) -> np.ndarray:return .0004+.0005*points[:,1]/400-.0003*points[:,0]/400
+    def stress(e: np.ndarray) -> np.ndarray:return fc*(2*(e/.002)-(e/.002)**2)
+    stress_c=stress(strain(concrete));stress_s=200000*strain(bars)-stress(strain(bars))
+    n=sum(stress_c*concrete[:,2])+sum(stress_s*area)
+    mx=(sum(stress_c*concrete[:,2]*concrete[:,1])+sum(stress_s*area*bars[:,1]))/1000
+    my=-(sum(stress_c*concrete[:,2]*concrete[:,0])+sum(stress_s*area*bars[:,0]))/1000
+    first=section_equilibrium(concrete,bars,area,(n,mx,my),fc,360.,'biaxial')
+    rotation=np.array([[0.,1.],[-1.,0.]])
+    rotated_c=concrete.copy();rotated_b=bars.copy()
+    rotated_c[:,:2]=concrete[:,:2]@rotation;rotated_b[:,:2]=bars[:,:2]@rotation
+    second=section_equilibrium(rotated_c,rotated_b,area,(n,-my,mx),fc,360.,'rotated')
+    assert first.passed and second.passed
+    assert first.max_concrete_strain==pytest.approx(second.max_concrete_strain,abs=1e-7)

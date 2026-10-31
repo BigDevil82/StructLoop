@@ -3,7 +3,8 @@ from typing import Any
 import openseespy.opensees as ops
 from ..builders.base import AnalysisModelContext
 from .combinations import cqc, srss
-from .member_forces import extract_beam_force_tuple, extract_wall_force_tuple
+from .member_forces import extract_beam_force_tuple, extract_wall_force_tuple, extract_wall_section_resultant
+from ..geometry.wall_piers import compound_wall_sections
 from .modal import identify_dominant_modes, modal_periods_from_eigenvalues
 from .results import DirectionResponse, ModalSummary, ResponseSpectrumCaseResult, StoryMetric
 
@@ -12,6 +13,8 @@ class ResponseSpectrumAnalyzer:
     def __init__(self, context: AnalysisModelContext):
         self.context = context
         self.xmin, self.xmax, self.ymin, self.ymax = context.bbox
+        self.compound_sections=compound_wall_sections(context.wall_story_element_units)
+        self.compound_by_direction: dict[str,dict[tuple[int,int],tuple[float,...]]] = {}
 
     def _combine(self, modal_values: list[float], eigen_values: list[float]) -> float:
         if not modal_values:
@@ -34,7 +37,7 @@ class ResponseSpectrumAnalyzer:
             direction_responses[dir_name] = response
             beam_forces_by_dir[dir_name] = beam_forces
             wall_forces_by_dir[dir_name] = wall_forces
-        return ResponseSpectrumCaseResult(eigen_values=eigen_values, modal_periods=modal_periods, modal_summary=modal_summary, story_weights=story_weights, direction_responses=direction_responses, seismic_beam_forces_by_dir=beam_forces_by_dir, seismic_wall_forces_by_dir=wall_forces_by_dir)
+        return ResponseSpectrumCaseResult(eigen_values=eigen_values, modal_periods=modal_periods, modal_summary=modal_summary, story_weights=story_weights, direction_responses=direction_responses, seismic_beam_forces_by_dir=beam_forces_by_dir, seismic_wall_forces_by_dir=wall_forces_by_dir,seismic_compound_forces_by_dir=self.compound_by_direction)
 
     def extract_modal_summary(self, modal_periods: list[float], modal_props: dict[str, Any]) -> ModalSummary:
         for key in ('partiMassRatiosMX','partiMassRatiosMY','partiMassRatiosRMZ'):
@@ -106,6 +109,9 @@ class ResponseSpectrumAnalyzer:
             store['axial'].append(axial_n)
             store['moment'].append(moment_m)
             store['shear'].append(shear_v)
+        for section in self.compound_sections:
+            forces=extract_wall_section_resultant(section.units,section.centroid)
+            self.compound_modes.setdefault((section.section_id,section.story),[]).append(forces)
 
     def _update_story_stiffness_ratios(self, metrics: list[StoryMetric], stiffness_values: list[float]) -> None:
         for story_index, metric in enumerate(metrics):
@@ -152,6 +158,7 @@ class ResponseSpectrumAnalyzer:
         return (eigen_values, modal_periods, self.extract_modal_summary(modal_periods, returned))
 
     def _run_rsa_analysis(self, dir_idx: int, dir_name: str, eigen_values: list[float], story_weights: list[float]) -> tuple[DirectionResponse, dict[tuple[int, int], tuple[float, float, float]], dict[tuple[int, int], tuple[float, float, float]]]:
+        self.compound_modes: dict[tuple[int,int],list[tuple[float,...]]] = {}
         modal_drift_center = [[] for _ in range(self.context.num_stories)]
         modal_drift_corners = [[[] for _ in range(self.context.num_stories)] for _ in range(4)]
         modal_story_shear = [[] for _ in range(self.context.num_stories)]
@@ -189,6 +196,8 @@ class ResponseSpectrumAnalyzer:
             metrics.append(StoryMetric(story=story_index + 1, drift_max=drift_max, drift_avg=drift_avg, drift_center=center_drift, torsion_ratio=torsion_ratio, shear_weight_ratio=shear_weight_ratio, stiffness_k=stiffness, stiffness_ratio_adjacent=1.0, stiffness_ratio_average=1.0))
         self._update_story_stiffness_ratios(metrics, stiffness_values)
         response = DirectionResponse(direction=dir_name, metrics=metrics)
+        self.compound_by_direction[dir_name]={key:tuple(self._combine([f[i] for f in modes],eigen_values)
+            for i in range(6)) for key,modes in self.compound_modes.items()}
         return (response, self._combine_beam_modal_forces(beam_modal_forces, eigen_values), self._combine_wall_modal_forces(wall_modal_forces, eigen_values))
 
     def _combine_beam_modal_forces(self, beam_modal_forces: dict[tuple[int, int], dict[str, list[float]]], eigen_values: list[float]) -> dict[tuple[int, int], tuple[float, float, float]]:

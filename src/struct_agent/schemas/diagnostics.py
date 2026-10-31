@@ -38,6 +38,8 @@ class MemberDiagnostic(Contract):
     reinforcement_checked: bool
     reinforcement_passed: bool | None
     reinforcement_messages: tuple[str, ...] = ()
+    compound_section_id: int | None = Field(default=None,ge=0)
+    shared_wall_ids: tuple[int,...] = ()
 
     @property
     def utilization(self) -> float:
