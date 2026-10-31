@@ -67,3 +67,26 @@ def test_beam_branch_does_not_turn_one_span_into_two_short_beams(layout: LayoutC
     topology=native_topology(candidate.model_copy(update={'members':members+(support,)}))
     spans=beam_spans(topology.beams,topology.walls)
     assert next(s for s in spans if 2 in s.source_ids).source_ids==(2,)
+
+
+def test_local_wall_growth_honours_both_rooms_on_a_shared_boundary() -> None:
+    from tests.unit.test_search_feedback import local_case
+    from struct_agent.adapters.design_search import local_layout_candidates
+    layout,rooms,design,diagnostic=local_case()
+    second=((0.,3.),(4.,3.),(4.,6.),(0.,6.))
+    layout=layout.model_copy(update={'slabs':layout.slabs+(second,)})
+    mask=list(rooms.masks[0]);mask[4]=((0.,.5),)  # Second room's bottom edge blocks x>1.
+    rooms=rooms.model_copy(update={'x':rooms.x*2,'room_polygons':layout.slabs,'masks':rooms.masks+(tuple(mask),)})
+    result=local_layout_candidates(layout,rooms,design,(diagnostic(0),),steps_m=(.1,))
+    assert not result.proposals and any('nonbuildable_interval' in x for x in result.rejected)
+
+
+def test_local_review_rejects_retyping_slabs_and_wrong_architecture() -> None:
+    from tests.unit.test_search_feedback import local_case
+    from struct_agent.services.model_review import review_local_layout_change
+    layout,rooms,design,_=local_case()
+    changed=layout.members[0].model_copy(update={'role':'secondary'})
+    candidate=layout.model_copy(update={'members':(changed,)+layout.members[1:]})
+    assert review_local_layout_change(layout,candidate,rooms,design=design)==('member_identity_or_role_changed',)
+    rooms=rooms.model_copy(update={'room_polygons':(((10.,0.),(14.,0.),(14.,3.),(10.,3.)),)})
+    assert review_local_layout_change(layout,layout,rooms,design=design)==('room_graph_does_not_match_layout',)

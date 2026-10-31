@@ -45,3 +45,29 @@ class LayoutCandidate(Contract):
             if len(poly) < 3 or abs(area) <= 1e-12:
                 raise ValueError("Invalid slab polygon")
         return self
+
+
+class WallTipMove(Contract):
+    """Move one wall/beam joint on its existing axis; global XY, metres."""
+    wall_member_id: str
+    beam_member_id: str
+    before_m: tuple[float, float]
+    after_m: tuple[float, float]
+
+
+class LocalLayoutProposal(Contract):
+    parent_layout_sha256: str
+    room_graph_sha256: str
+    control_member_id: str
+    control_story: int = Field(ge=1)
+    metric: Literal['beam_shear', 'wall_shear', 'wall_reinforcement']
+    control_utilization: float = Field(ge=0.)
+    operation: Literal['retract_wall_tip', 'extend_wall_tip']
+    move: WallTipMove
+    reason: str
+    layout: LayoutCandidate
+
+
+class LocalLayoutSearch(Contract):
+    proposals: tuple[LocalLayoutProposal, ...]
+    rejected: tuple[str, ...]

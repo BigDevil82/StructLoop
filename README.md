@@ -112,13 +112,12 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 ## 验证
 
 ```powershell
-.venv/Scripts/python.exe -m pytest -q
-.venv/Scripts/python.exe -m pytest -q tests/integration/test_real_adapters.py -m real --run-real
+.venv/Scripts/python.exe -m pytest -q --run-real
 ```
 
-最后一条会实际运行RC-GNN和OpenSees：前者检查当前建筑图的布置输出，后者将结构计算结果与之前保存的结果核对。
+默认最终验收只运行上述完整测试，包含实际RC-GNN和OpenSees测试：前者检查当前建筑图的布置输出，后者将结构计算结果与之前保存的结果核对。
 所用输入和参考结果的路径见 `configs/real_fea_reference.json`。普通测试默认跳过需要模型权重或真实求解器的测试。
-完整本地验收可运行 `.venv/Scripts/python.exe -m pytest -q --run-real`。
+开发中可先运行受修改影响的目标测试，无需在完整验收前再重复跑一遍全部普通测试。
 
 ## Phase 4 决策与学校 LLM
 
@@ -143,6 +142,12 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 新生成 `residential_001_rcgnn_03` 保留短墙原类别并输出几何审查；未消解短墙时真实优化会前置阻断。
 真实优化默认直接 FEA；旧代理权重在与修正后的标签验证兼容前不参与筛选。
 
+构件反馈驱动的局部布局试验可在上述诊断命令上增加`--local-layout-search --rooms <房间图> --budget-fea 5`。
+默认只对受剪超限或墙配筋失败生成候选；可用`--target-utilization 0.95`对接近限值的构件试验增加余量，此数值不改变验算限值。
+候选仅沿原轴线移动墙与梁的共同端点，保留全部构件类别、支路节点和楼板；新增墙段必须位于相邻房间共同允许的区间，不得侵入门窗禁布区。
+`--step-m 0.1 0.2`指定移动量（m），`--max-candidates`控制候选数；全部实际求解经共享预算记账，失败也保留。
+墙梁类别转换是前处理修错手段，不作为局部优化动作；本功能尚未接入Agent策略。
+
 ## 当前边界
 
 - 原工程 `axis_engine` 是 CAD/规则布置模块；真正的 RC-GNN 位于 `Png2Dxf/src/shearwall_pred`。
@@ -150,7 +155,7 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 - 暂时沿用上游固定层高/板厚/分区材料口径；不支持的输入直接拒绝。
 - 默认筛选阈值在迁移生成案例上拒绝了本轮候选；这不证明候选一定不可行。
   `--screening-threshold 0.0` 仅用于另行标记的调用流程检查，不代表 CASINO 效率实验。
-- 基本流程测试中的实际求解方案均未通过结构校核。没有宣称获得工程可行解或证明论文研究假设。
+- 早期Agent基本流程测试中的方案未通过校核；当前经确认的前处理与联合截面验算已得到既有12层试算条件下通过程序检查的方案，见`docs/final_model.md`。这不替代正式工程签审或论文对比实验。
 - 已接入真实 FEA 反馈和学校 LLM；审批文件只能来自受信任操作方，并绑定候选/条件/用途。
   从磁盘恢复及工程人工审批界面尚未实现；同进程会话和已获批候选可继续执行。
 - 论文 Ours 的决策收益机制、正式对比及消融尚待研究设计与实验，不以基本流程测试替代科学结论。

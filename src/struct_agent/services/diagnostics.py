@@ -6,6 +6,8 @@ import json
 import math
 from pathlib import Path
 from typing import Any
+from struct_agent.schemas import DesignCandidate, LayoutCandidate, ProjectSpec, RoomGraph
+from struct_agent.services.analysis import AnalysisService
 
 from struct_agent.schemas.diagnostics import MemberDiagnostic
 
@@ -47,6 +49,56 @@ def load_members(path: Path) -> tuple[MemberDiagnostic, ...]:
     if payload["fidelity"] != "full" or payload["units"] != {"length": "m", "force": "N", "stress": "Pa"}:
         raise ValueError("Diagnostic report requires real FEA with explicit native units")
     return tuple(MemberDiagnostic.model_validate_json(json.dumps(row)) for row in payload["members"])
+
+
+def evaluate_local_layout_candidates(service: 'AnalysisService', layout: 'LayoutCandidate',
+        design: 'DesignCandidate', spec: 'ProjectSpec', rooms: 'RoomGraph',
+        members: tuple[MemberDiagnostic, ...], *, steps_m: tuple[float,...]=(.1,.2),
+        target_utilization: float=1., max_candidates: int=4) -> dict[str, Any]:
+    """Evaluate bounded local proposals with unchanged sections and shared FEA budget.
+
+    Reuse the existing constraint/cost ranking; solver failures stay in the record.
+    Each layout has a fresh problem and no surrogate or calibration state.
+    """
+    from struct_agent.adapters.casino import CasinoProblem
+    from struct_agent.adapters.design_search import local_layout_candidates
+    from struct_agent.services.analysis import AnalysisFailed, BudgetExhausted
+    from struct_agent._vendor.shearwall_optimization.surrogate_candidate import SurrogateCandidateEvaluator
+
+    native={k:round(float(v)*1000) if k!='conc_bot' else v for k,v in design.values.items()}
+    baseline_problem=CasinoProblem(layout,spec,service,layout_path=Path('unused'),seed=42)
+    baseline=baseline_problem.evaluate(native)
+    best_key=SurrogateCandidateEvaluator.rank_key(baseline)
+    best_layout_id=layout.layout_id
+    search=local_layout_candidates(layout,rooms,design,members,steps_m=steps_m,
+        target_utilization=target_utilization,max_candidates=max_candidates)
+    rows=[];termination='completed'
+    for proposal in search.proposals:
+        problem=CasinoProblem(proposal.layout,spec,service,layout_path=Path('unused'),seed=42)
+        try:
+            result=problem.evaluate(native)
+        except BudgetExhausted:
+            termination='budget_exhausted';break
+        except AnalysisFailed as exc:
+            rows.append({'proposal':proposal.model_dump(),'analysis':exc.record.model_dump(),
+                'ranking_improved':False,'error':exc.record.error.model_dump()})
+            continue
+        key=SurrogateCandidateEvaluator.rank_key(result)
+        improves=key<SurrogateCandidateEvaluator.rank_key(baseline)
+        if key<best_key:best_key,best_layout_id=key,proposal.layout.layout_id
+        rows.append({'proposal':proposal.model_dump(),'feasible':result.feasible,
+            'objectives':result.objectives,'normalized_violations':result.metrics['normalized_violations'],
+            'raw':next(r.raw for r in service.records if r.layout_id==proposal.layout.layout_id),
+            'ranking_improved':improves})
+    return {'termination':termination,'baseline_layout_id':layout.layout_id,
+        'baseline_feasible':baseline.feasible,'baseline_objectives':baseline.objectives,
+        'target_utilization':target_utilization,'target_is_search_trigger_not_code_limit':True,
+        'generated_candidate_count':len(search.proposals),'evaluated_candidate_count':len(rows),
+        'fea_attempts':len(service.records),'best_layout_id':best_layout_id,
+        'candidates':rows,'rejected':search.rejected,
+        'architectural_checks':'room masks, fixed axes, member roles, branch nodes, residual lengths',
+        'scope':'repeated standard floor; continuous-steel section checks, not bar detailing',
+        'agent_action_added':False,'member_role_changes_allowed':False}
 
 
 def write_report(path: Path, members: tuple[MemberDiagnostic, ...], *, parity_passed: bool | None = None) -> None:

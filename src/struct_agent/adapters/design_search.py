@@ -7,8 +7,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+import hashlib
+import math
 
 from struct_agent._vendor.shearwall_optimization.core.contracts import EvaluationResult, VariableSpec
+from struct_agent.schemas import DesignCandidate, LayoutCandidate, RoomGraph, Member
+from struct_agent.schemas.diagnostics import MemberDiagnostic
+from struct_agent.schemas.layout import WallTipMove, LocalLayoutProposal, LocalLayoutSearch
 
 
 def ordered_domain(variable: VariableSpec) -> list[Any]:
@@ -52,3 +57,106 @@ def feedback_candidates(x: dict[str, Any], result: EvaluationResult, variables: 
         if candidate != x and candidate not in evaluated and candidate not in proposals:
             proposals.append(candidate)
     return proposals
+
+
+def local_layout_candidates(layout: LayoutCandidate, rooms: RoomGraph, design: DesignCandidate,
+                            members: tuple[MemberDiagnostic, ...], *, steps_m: tuple[float, ...]=(.1,.2),
+                            target_utilization: float=1., max_candidates: int=8,
+                            protected_member_ids: frozenset[str]=frozenset()) -> LocalLayoutSearch:
+    """Feedback-guided wall-tip moves; roles, axes, floor geometry stay fixed.
+
+    Beam shear: retract a neighbouring wall tip to test a longer coupling span.
+    Wall shear/reinforcement: extend that wall on an existing collinear beam.
+    These are hypotheses, never predicted improvements or whole-member retyping.
+    target_utilization below one requests margin; it does not change code limits.
+    """
+    from struct_agent.services.model_review import review_local_layout_change
+    if design.layout_id!=layout.layout_id:
+        raise ValueError('Design/layout mismatch')
+    if not 0<target_utilization<=1 or max_candidates<1 or not steps_m:
+        raise ValueError('Require 0 < target utilization <= 1, candidates and steps')
+    if any(not math.isfinite(s) or s<=0 or abs(s*1000-round(s*1000))>1e-7 for s in steps_m):
+        raise ValueError('Local steps require positive whole millimetres')
+    by_id={m.member_id:m for m in layout.members}
+    if protected_member_ids-set(by_id):
+        raise ValueError('Protected member ID not present in layout')
+    parent_hash=hashlib.sha256(layout.model_dump_json().encode()).hexdigest()
+    rooms_hash=hashlib.sha256(rooms.model_dump_json().encode()).hexdigest()
+    controls=[];seen_controls=set();rejected=[]
+    for item in sorted(members,key=lambda m:(m.reinforcement_passed is not False,-m.utilization,m.native_id,m.story)):
+        sources=item.source_member_ids or (item.member_id,)
+        if any(s not in by_id or by_id[s].role!=item.role for s in sources):
+            raise ValueError(f'Diagnostic source members do not match layout: {sources}')
+        # A geometry match prevents accidental use of another layout's feedback.
+        from shapely.geometry import LineString
+        from shapely.ops import unary_union
+        if unary_union([LineString([by_id[s].start,by_id[s].end]) for s in sources]).hausdorff_distance(
+                LineString([item.start_m,item.end_m]))>1e-6:
+            raise ValueError(f'Diagnostic geometry does not match layout: {sources}')
+        if item.utilization<=target_utilization and item.reinforcement_passed is not False:
+            continue
+        key=(sources,item.role)
+        if key in seen_controls:continue
+        seen_controls.add(key)
+        if item.role!='wall' and item.utilization<=target_utilization:
+            rejected.append(f'{item.member_id}: beam flexural/detailing failure has no implemented layout rule')
+            continue
+        controls.append((item,sources))
+    buckets=[]
+    for item,sources in controls:
+        bucket=[]
+        metric='beam_shear' if item.role!='wall' else 'wall_shear' if item.utilization>target_utilization else 'wall_reinforcement'
+        operation='retract_wall_tip' if item.role!='wall' else 'extend_wall_tip'
+        pairs=[]
+        for source in sources:
+            control=by_id[source]
+            for joint in (control.start,control.end):
+                neighbours=[m for m in layout.members if m.member_id!=source and joint in (m.start,m.end)]
+                for other in neighbours:
+                    wall,beam=(other,control) if item.role!='wall' else (control,other)
+                    if wall.role=='wall' and beam.role!='wall':pairs.append((wall,beam,joint))
+        for step in sorted(set(steps_m)):
+            for wall,beam,joint in pairs:
+                if {wall.member_id,beam.member_id}&protected_member_ids:
+                    rejected.append(f'{item.member_id}: protected member at {joint}')
+                    continue
+                root=wall.end if wall.start==joint else wall.start
+                length=math.dist(root,joint)
+                direction=-1. if operation=='retract_wall_tip' else 1.
+                moved=tuple(round(joint[i]+direction*step*(joint[i]-root[i])/length,6) for i in range(2))
+                changed=[]
+                for m in layout.members:
+                    if m.member_id not in (wall.member_id,beam.member_id):changed.append(m);continue
+                    data=m.model_dump()
+                    data.update(start=moved if m.start==joint else m.start,end=moved if m.end==joint else m.end)
+                    if data['start']==data['end']:break
+                    changed.append(Member.model_validate(data))
+                if len(changed)!=len(layout.members):
+                    rejected.append(f'{item.member_id}: step {step} removes a member')
+                    continue
+                digest=hashlib.sha256((parent_hash+str([(m.start,m.end) for m in changed])).encode()).hexdigest()[:12]
+                candidate=LayoutCandidate.model_validate({**layout.model_dump(),'layout_id':f'{layout.layout_id}_local_{digest}',
+                    'source':'member_feedback_wall_tip_move','members':tuple(changed)})
+                issues=review_local_layout_change(layout,candidate,rooms,design=design)
+                if issues:
+                    rejected.append(f'{item.member_id}: {operation} {step}m at {joint}: '+', '.join(issues))
+                    continue
+                mechanism='增大梁跨，试验连梁端弯矩对应的设计剪力能否降低' if item.role!='wall' else '沿可布置边界增加墙长，试验受剪或轴力—双向弯矩承载能力能否改善'
+                failure='；墙配筋不通过：'+', '.join(item.reinforcement_messages) if metric=='wall_reinforcement' else ''
+                reason=f'{item.member_id}第{item.story}层，受剪利用率{item.utilization:.4f}，搜索触发值{target_utilization:g}{failure}；{mechanism}；构件类别不变，效果由真实FEA确定'
+                bucket.append(LocalLayoutProposal(parent_layout_sha256=parent_hash,room_graph_sha256=rooms_hash,
+                    control_member_id=item.member_id,control_story=item.story,metric=metric,
+                    control_utilization=item.utilization,operation=operation,
+                    move=WallTipMove(wall_member_id=wall.member_id,beam_member_id=beam.member_id,before_m=joint,after_m=moved),
+                    reason=reason,layout=candidate))
+        if not bucket:rejected.append(f'{item.member_id}: no admissible collinear wall-tip move')
+        buckets.append(bucket)
+    # Round-robin keeps one controlling member from consuming the entire budget.
+    proposals=[];seen=set()
+    for index in range(max((len(b) for b in buckets),default=0)):
+        for bucket in buckets:
+            if index<len(bucket) and bucket[index].layout.layout_id not in seen:
+                proposals.append(bucket[index]);seen.add(bucket[index].layout.layout_id)
+                if len(proposals)==max_candidates:
+                    return LocalLayoutSearch(proposals=tuple(proposals),rejected=tuple(dict.fromkeys(rejected)))
+    return LocalLayoutSearch(proposals=tuple(proposals),rejected=tuple(dict.fromkeys(rejected)))
