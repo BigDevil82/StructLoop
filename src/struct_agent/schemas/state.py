@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 
 from .base import Contract
 
-Action = Literal["CONTINUE_OPTIMIZATION", "SWITCH_LAYOUT", "REQUEST_HUMAN_REVIEW", "FINALIZE"]
+Action = Literal["CONTINUE_OPTIMIZATION", "ADJUST_LOCAL_LAYOUT", "SWITCH_LAYOUT", "REQUEST_HUMAN_REVIEW", "FINALIZE"]
 
 
 class Decision(Contract):
@@ -18,6 +18,6 @@ class Decision(Contract):
 
     @model_validator(mode="after")
     def target(self) -> Decision:
-        if (self.action == "SWITCH_LAYOUT") != (self.target_layout_id is not None):
-            raise ValueError("Only SWITCH_LAYOUT requires a target layout")
+        if (self.action in ('SWITCH_LAYOUT','ADJUST_LOCAL_LAYOUT')) != (self.target_layout_id is not None):
+            raise ValueError("Only SWITCH_LAYOUT/ADJUST_LOCAL_LAYOUT require a target layout")
         return self

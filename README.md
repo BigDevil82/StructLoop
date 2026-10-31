@@ -146,7 +146,10 @@ CLI 在上述 `optimize` 命令中添加 `--generations-per-step 1` 即逐代推
 默认只对受剪超限或墙配筋失败生成候选；可用`--target-utilization 0.95`对接近限值的构件试验增加余量，此数值不改变验算限值。
 候选仅沿原轴线移动墙与梁的共同端点，保留全部构件类别、支路节点和楼板；新增墙段必须位于相邻房间共同允许的区间，不得侵入门窗禁布区。
 `--step-m 0.1 0.2`指定移动量（m），`--max-candidates`控制候选数；全部实际求解经共享预算记账，失败也保留。
-墙梁类别转换是前处理修错手段，不作为局部优化动作；本功能尚未接入Agent策略。
+墙梁类别转换是前处理修错手段，不作为局部优化动作。
+Agent入口增加`--enable-local-adjustment`后，规则/LLM可用`ADJUST_LOCAL_LAYOUT`选择程序提供的候选，逐次真实验算并读取新的控制构件。
+`--local-step-m`、`--local-max-trials`、`--local-max-candidates`、`--local-target-utilization`限制试验范围；`--protect-member`指定禁止调整的构件。
+失败或变差的候选保留当前方案，已采纳的新布局独立建立CASINO会话；详细授权、状态和效果记录见`docs/phase4_agent.md`。
 
 ## 当前边界
 

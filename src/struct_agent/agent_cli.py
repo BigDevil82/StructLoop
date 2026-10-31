@@ -17,6 +17,7 @@ from struct_agent.schemas import DesignCandidate, LayoutCandidate, ProjectSpec, 
 from struct_agent.services.analysis import AnalysisService
 from struct_agent.workflows.optimization_env import OptimizationEnvironment
 from struct_agent.workflows.layout_approval import LayoutApproval
+from struct_agent.schemas.agent import LocalAdjustmentConfig
 
 
 def main() -> None:
@@ -41,9 +42,18 @@ def main() -> None:
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--layout-approval", type=Path, action="append", default=[],
                         help="Operator approval bound to exact candidate, conditions and run purpose")
+    parser.add_argument('--enable-local-adjustment',action='store_true',help='Authorize bounded geometry-checked local FEA trials')
+    parser.add_argument('--local-step-m',type=float,nargs='+',default=[.1,.2])
+    parser.add_argument('--local-target-utilization',type=float,default=1.)
+    parser.add_argument('--local-max-trials',type=int,default=4)
+    parser.add_argument('--local-max-candidates',type=int,default=4)
+    parser.add_argument('--protect-member',action='append',default=[])
     args = parser.parse_args()
     if args.budget_fea < 1 or args.max_steps < 1:
         parser.error("Budget and max-steps must be positive")
+    local_config=LocalAdjustmentConfig(steps_m=tuple(args.local_step_m),
+        target_utilization=args.local_target_utilization,max_candidates=args.local_max_candidates,
+        max_trials=args.local_max_trials,protected_member_ids=tuple(args.protect_member)) if args.enable_local_adjustment else None
     assets = load_assets(args.assets, names=("feasibility", "steel") if args.use_surrogate else ())
     layouts = tuple(LayoutCandidate.model_validate_json(p.read_text(encoding="utf-8")) for p in args.layout)
     rooms = RoomGraph.model_validate_json(args.rooms.read_text(encoding="utf-8"))
@@ -79,13 +89,18 @@ def main() -> None:
         inputs["llm_config"] = args.llm_config
     create_run(args.run, seed=args.seed, inputs=inputs, config={"casino": cfg.model_dump(mode="json"),
         "budget": args.budget_fea, "max_steps": args.max_steps, "policy": args.policy,
-        "purpose": args.purpose, "case_id": args.case_id, "fidelity": "full"})
+        "purpose": args.purpose, "case_id": args.case_id, "fidelity": "full",
+        'local_adjustment':local_config.model_dump() if local_config else None})
     start = time.monotonic()
-    evaluator = AnalysisService(OpenSeesAdapter(log_directory=args.run / "solver_logs"),
+    evaluator = AnalysisService(OpenSeesAdapter(log_directory=args.run / "solver_logs",
+                                diagnostics_directory=args.run/'diagnostics' if local_config else None),
                                 budget=args.budget_fea, directory=args.run / "analyses")
     def factory(layout: LayoutCandidate, directory: Path) -> CasinoSession:
         return CasinoSession(layout, rooms, spec, evaluator, cfg, directory=directory)
-    env = OptimizationEnvironment(args.case_id, layouts, evaluator, factory, args.run)
+    env = OptimizationEnvironment(args.case_id, layouts, evaluator, factory, args.run,
+        rooms=rooms,spec=spec,local_config=local_config)
+    if initial is not None and local_config:
+        env.initialize_design(initial)
     client = ChatClient(chat_cfg, key, args.run / "api") if chat_cfg else None
     policy: DecisionPolicy = LLMPolicy(client, args.run / "decisions") if client else (
         FixedPolicy() if args.policy == "fixed" else RulePolicy())

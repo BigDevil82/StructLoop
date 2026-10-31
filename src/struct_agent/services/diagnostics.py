@@ -5,7 +5,7 @@ from collections import Counter
 import json
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from struct_agent.schemas import DesignCandidate, LayoutCandidate, ProjectSpec, RoomGraph
 from struct_agent.services.analysis import AnalysisService
 
@@ -44,10 +44,10 @@ def member_summary(members: tuple[MemberDiagnostic, ...]) -> dict[str, Any]:
     return result
 
 
-def load_members(path: Path) -> tuple[MemberDiagnostic, ...]:
+def load_members(path: Path, *, expected_fidelity: Literal['full','mock']='full') -> tuple[MemberDiagnostic, ...]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload["fidelity"] != "full" or payload["units"] != {"length": "m", "force": "N", "stress": "Pa"}:
-        raise ValueError("Diagnostic report requires real FEA with explicit native units")
+    if payload["fidelity"] != expected_fidelity or payload["units"] != {"length": "m", "force": "N", "stress": "Pa"}:
+        raise ValueError("Diagnostic report fidelity/units do not match the evaluator")
     return tuple(MemberDiagnostic.model_validate_json(json.dumps(row)) for row in payload["members"])
 
 

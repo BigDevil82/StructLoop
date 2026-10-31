@@ -240,3 +240,25 @@ def test_matched_three_policy_comparison(case_inputs: tuple, tmp_path: Path) -> 
     assert [r["fidelity"] for r in rows] == ["mock"] * 3
     assert [r["approved_switches"] for r in rows] == [0, 1, 1]
     assert all(r["fea_attempts"] <= 8 and r["best_feasible_cost"] is None for r in rows)
+
+
+def test_verified_seed_initializes_only_its_own_fresh_session(case_inputs: tuple,tmp_path: Path) -> None:
+    """Real CASINO/weights, explicitly synthetic FEA; no calibration transfer."""
+    from struct_agent.adapters.casino import CasinoProblem
+    layout,rooms,spec,cfg=case_inputs
+    service=make_service(tmp_path/'seed_run',cfg)
+    problem=CasinoProblem(layout,spec,service,layout_path=Path('unused'),seed=42)
+    values={v.name:v.domain[0] for v in problem.variables}
+    result=problem.evaluate(values);design=problem.results[0][0]
+    session=CasinoSession(layout,rooms,spec,service,cfg,directory=tmp_path/'seed_run/session')
+    session.seed_verified_design(design,result)
+    assert session.optimizer.problem.initial_values==design.values
+    assert session.optimizer.evaluator.local_calibrator.sample_count==0
+    assert session.optimizer.problem.results==[(design,result)]
+    with pytest.raises(ValueError,match='fresh session'):
+        session.seed_verified_design(design,result)
+    other=layout.model_copy(update={'layout_id':'different_layout'})
+    isolated=CasinoSession(other,rooms,spec,service,cfg,directory=tmp_path/'seed_run/isolated')
+    with pytest.raises(ValueError,match='this layout'):
+        isolated.seed_verified_design(design,result)
+    assert isolated.optimizer.evaluator.local_calibrator is not session.optimizer.evaluator.local_calibrator

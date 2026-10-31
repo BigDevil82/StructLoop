@@ -13,6 +13,8 @@ from struct_agent.schemas import ErrorRecord, LayoutCandidate, ProjectSpec, Room
 from struct_agent.services.analysis import AnalysisFailed, AnalysisService, BudgetExhausted
 from .casino import CasinoConfig, create_optimizer
 from struct_agent._vendor.shearwall_optimization.algorithms.evolution import IncrementalGA
+from struct_agent._vendor.shearwall_optimization.core.contracts import EvaluationResult
+from struct_agent.schemas import DesignCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,18 @@ class CasinoSession:
                                if cfg.use_surrogate and p is not None},
             "upstream_random_seeds": {"exploration": 20260621, "calibration": 0},
             "resume_scope": "in_process_generation_boundary"})
+
+    def seed_verified_design(self, design: DesignCandidate, result: EvaluationResult) -> None:
+        """Seed a fresh session from its OWN verified layout, without calibration reuse."""
+        if self.advance_count or self.optimizer.problem.results:
+            raise ValueError('Only a fresh session can receive an evaluated seed')
+        if design.layout_id!=self.binding['layout_id'] or design.condition_id!=self.binding['condition_id']:
+            raise ValueError('Seed must belong to this layout and conditions')
+        design.validate_against(self.optimizer.problem.spec)
+        self.optimizer.problem.initial_values=dict(design.values)
+        self.optimizer.problem.results.append((design,result))
+        write_json(self.directory/'seed.json',{'design':design.model_dump(),'evaluation':asdict(result),
+            'calibration_reused':False,'source':'same_layout_AnalysisService_evaluation'})
 
     def advance(self, generations: int = 1) -> dict[str, Any]:
         if type(generations) is not int or generations < 1:

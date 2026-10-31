@@ -31,13 +31,13 @@ def test_full_success_requires_complete_native_response() -> None:
 
 
 @pytest.mark.parametrize("action", [
-    "CONTINUE_OPTIMIZATION", "SWITCH_LAYOUT", "REQUEST_HUMAN_REVIEW", "FINALIZE",
+    "CONTINUE_OPTIMIZATION", "SWITCH_LAYOUT", "ADJUST_LOCAL_LAYOUT", "REQUEST_HUMAN_REVIEW", "FINALIZE",
 ])
 def test_real_decisions_keep_target_validation(action: str) -> None:
-    target = "alternative_layout" if action == "SWITCH_LAYOUT" else None
+    target = "alternative_layout" if action in ('SWITCH_LAYOUT','ADJUST_LOCAL_LAYOUT') else None
     decision = Decision(action=action, reason="unit test", evidence_refs=("analyses/eval_00001.json",),
                         target_layout_id=target)
     assert Decision.model_validate_json(decision.model_dump_json()) == decision
-    with pytest.raises(ValidationError, match="Only SWITCH_LAYOUT requires a target layout"):
+    with pytest.raises(ValidationError, match="require a target layout"):
         Decision(action=action, reason="unit test",
                  target_layout_id=None if target else "unexpected_layout")

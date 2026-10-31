@@ -1,7 +1,7 @@
 # Phase 4：受控决策与真实优化反馈
 
 本阶段把固定策略、规则策略和学校 LLM 接入同一个 `OptimizationEnvironment`。
-决策动作只能是继续当前 CASINO 会话、提出切换预置布局、请求人工检查或结束运行。
+决策动作包括继续当前 CASINO 会话、选择受建筑约束的局部候选、提出切换预置布局、请求人工检查或结束运行。
 LLM 不接收 shell 工具，不修改几何、预算、求解结果或审批记录。
 
 ## 学校 API
@@ -43,7 +43,7 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 一次决策推进一代，可能产生多次 FEA；共享服务在每次实际求解前检查总预算，含失败尝试。
 
 继续动作保留同一会话。仅成功但不可行的反馈允许提出切换；求解/执行错误只能请求人工检查。
-规则策略在停滞两步或当前会话完成时优先提议切换，固定策略永不切换。
+启用局部调整且存在合法候选时，规则策略先试一个局部候选；否则在停滞两步或当前会话完成时提议切换预置布局。固定策略只做固定布局参数优化。
 停滞按“可行性→总违反量→目标值”严格比较：改善则清零，否则加一，不使用数值容差；这是公开的启发式，
 不是已验证的科学优势。LLM 接收确定性状态、历史动作、预算及证据；尚未将其命名为论文 Ours。
 
@@ -54,6 +54,34 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 批准必须同时匹配布局、设计条件规范 JSON 哈希及用途，在实际切换提议后才应用，并记录事件。
 没有匹配批准时 CLI 在待审批处退出；**不支持从磁盘恢复**，交互界面属下一阶段。
 
+## 局部布局调整
+
+运行入口显式增加`--enable-local-adjustment`，授权当前输入与预算内的局部试验。
+该授权绑定根布局、房间图、设计条件和移动规则，写入`local/authorization.json`；LLM不能生成或修改授权。
+候选只沿原轴线移动墙梁共同端点，保持全部构件类别，受门窗禁布区、相邻房间限制、支路连接、残余长度和指定保护构件约束。
+墙梁类别转换继续只用于前处理修错，不进入动作空间。
+
+参数：`--local-step-m 0.1 0.2`指定移动量（m）；`--local-max-candidates 4`限制每份反馈的候选数；
+`--local-max-trials 4`限制本次运行的局部试验次数；`--protect-member <ID>`可重复指定禁止调整的构件。
+默认`--local-target-utilization 1.0`只处理受剪超限/墙配筋失败；低于1时尝试增加余量，不改变验算限值。
+所有试验还受总`--budget-fea`约束，失败也计数；相同几何和参数不因更换布局ID而重复试算。
+
+`ADJUST_LOCAL_LAYOUT`必须将`target_layout_id`指向状态中`local_layout_choices`的一个`candidate_id`。
+策略看到控制构件、楼层、指标利用率、移动量、候选理由、当前整体指标与历次试验效果，不接收可执行代码或坐标编辑接口。
+执行前重新校验布局/房间图哈希、建筑约束和连接；每次只试一个候选，完成真实FEA后才返回策略重新决策。
+按现有“整体可行性→违反量→材料成本”排序，严格改善才采纳；变差或失败保留当前方案，候选结果与原始错误照常记录。
+局部改善可能转移控制位置，状态中的`local_adjustment_history`保留控制构件及全结构梁最大利用率前后值，策略可据新反馈继续选择。
+
+传入`--initial-design`时，先单独复算该设计一次，让策略先读真实反馈，避免必须先完成一代GA才能考虑布局调整。
+需要继续CASINO时，为当前新布局创建独立会话，以该布局自己已验算的设计作为起点；不复制其他布局的种群、缓存或局部校准器。
+已有预置布局的`SWITCH_LAYOUT`仍按上节进入审批；本节的受控局部试验由入口开关和确定性检查授权，不产生工程签审结论。
+
+局部轨迹保存在`local/proposals_eval_*.json`、`local/trial_*.json`及`events/`；每步记录是否采纳、真实预算增量、整体指标变化和材料成本。
+未启用该开关时维持原工作流。规则与LLM可选择局部动作；固定策略不选择该动作。
+
+`FINALIZE`只结束优化计算并保存结果，工程审查状态仍为Pending；已有可行设计且预算耗尽时可以直接结束计算。
+真实试验中模型曾把两者混淆而请求复核，现已明确收尾含义，并用相同末态的真实API复判验证，保留原始轨迹。
+
 运行文件：`manifest.json`、`events/`、`analyses/`、`solver_logs/`、`sessions/`、
 `api/`、`decisions/`、`summary.json`。事件记录动作前后状态、实际 FEA 增量和目标变化。
 输出目录和各 JSON 不可覆盖。LLM 决策可用 `ReplayPolicy` 离线回放，要求状态哈希完全一致；
@@ -63,8 +91,7 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 
 ```powershell
 .venv/Scripts/python.exe -m pytest -q tests/unit/test_llm_policy.py tests/unit/test_optimization_env.py tests/unit/test_comparison.py
-.venv/Scripts/python.exe -m pytest -q tests/integration/test_casino_session.py --run-real
-.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m pytest -q --run-real
 .venv/Scripts/python.exe -m struct_agent.evaluation.compare --run outputs/current/fixed_run --run outputs/current/llm_run --out outputs/comparison.json
 ```
 

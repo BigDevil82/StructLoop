@@ -95,3 +95,30 @@ def test_credentials_are_literal_and_never_loaded_into_environment(tmp_path: Pat
 def test_gateway_rejects_unsafe_configuration(url: str) -> None:
     with pytest.raises(ValidationError):
         ChatConfig(base_url=url)
+
+
+def test_llm_selects_only_generated_local_candidate_and_replays_exact_state(tmp_path: Path) -> None:
+    from tests.unit.test_optimization_env import local_env
+    env=local_env(tmp_path/'env')
+    state=env.observe();candidate=state.local_layout_choices[0].candidate_id
+    def transport(*args):
+        return {'choices':[{'message':{'content':json.dumps({'action':'ADJUST_LOCAL_LAYOUT',
+            'target_layout_id':candidate,'reason':'test bounded local candidate','evidence_refs':state.evidence_refs})}}]}
+    client=ChatClient(ChatConfig(),SecretStr('synthetic-key-only'),tmp_path/'calls',transport=transport)
+    decision=LLMPolicy(client,tmp_path/'decisions').choose(state)
+    assert decision.target_layout_id==candidate
+    assert ReplayPolicy(tmp_path/'decisions').choose(state)==decision
+    after=env.step(decision)
+    assert after.local_adjustment_history[-1].accepted and after.fidelity=='mock'
+
+
+@pytest.mark.parametrize('extra',[{'coordinates':[[0.,0.],[1.,1.]]},{'target_layout_id':'invented_candidate'}])
+def test_llm_cannot_supply_coordinates_or_invent_local_candidates(tmp_path: Path,extra: dict) -> None:
+    from tests.unit.test_optimization_env import local_env
+    env=local_env(tmp_path/'env');state=env.observe()
+    content={'action':'ADJUST_LOCAL_LAYOUT','target_layout_id':state.local_layout_choices[0].candidate_id,
+        'reason':'synthetic rejection test','evidence_refs':state.evidence_refs,**extra}
+    client=ChatClient(ChatConfig(),SecretStr('synthetic-key-only'),tmp_path/'calls',
+        transport=lambda *args:{'choices':[{'message':{'content':json.dumps(content)}}]})
+    decision=LLMPolicy(client,tmp_path/'decisions').choose(state)
+    assert decision.action=='REQUEST_HUMAN_REVIEW' and len(env.evaluator.records)==1
