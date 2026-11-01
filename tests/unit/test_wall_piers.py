@@ -155,6 +155,39 @@ def test_standalone_short_limb_requires_column_review_even_when_section_balances
     assert 'column_stability_and_detailing_review_required' in result.messages
 
 
+@pytest.mark.parametrize('spacing_mm',[20.,40.])
+@pytest.mark.parametrize('with_hole',[False,True])
+def test_vectorized_fibers_preserve_scalar_clipping_points_and_areas(spacing_mm: float,with_hole: bool) -> None:
+    import numpy as np
+    from shapely.geometry import Polygon,box
+    from struct_agent._vendor.shearwall_modeling.design.wall import section_fibers
+    polygon=(Polygon([(0.,0.),(213.,0.),(213.,191.),(0.,191.)],holes=[[(47.,51.),(110.,51.),(110.,142.),(47.,142.)]])
+             if with_hole else Polygon([(0.,0.),(213.,0.),(213.,51.),(47.,51.),(47.,191.),(0.,191.)]))
+    xmin,ymin,xmax,ymax=polygon.bounds
+    expected=[]
+    for x in np.arange(xmin,xmax,spacing_mm):
+        for y in np.arange(ymin,ymax,spacing_mm):
+            cell=polygon.intersection(box(x,y,min(x+spacing_mm,xmax),min(y+spacing_mm,ymax)))
+            if cell.area>1e-8:expected.append((cell.centroid.x,cell.centroid.y,cell.area))
+    np.testing.assert_array_equal(section_fibers(polygon,spacing_mm),expected)
+
+
+def test_fiber_cache_binds_full_geometry_and_spacing_and_is_caller_owned() -> None:
+    import numpy as np
+    from shapely.geometry import box
+    from struct_agent._vendor.shearwall_modeling.design.wall import section_fibers
+    polygon=box(0.,0.,213.,51.);cache={}
+    first=section_fibers(polygon,20.,cache=cache)
+    assert section_fibers(polygon,20.,cache=cache) is first and not first.flags.writeable
+    assert section_fibers(polygon,40.,cache=cache) is not first
+    changed=section_fibers(box(0.,0.,214.,51.),20.,cache=cache)
+    assert changed[:,2].sum()!=first[:,2].sum() and len(cache)==3
+    separate=section_fibers(polygon,20.,cache={})
+    assert separate is not first
+    np.testing.assert_array_equal(separate,first)
+    with pytest.raises(ValueError,match='Positive'):section_fibers(polygon,0.)
+
+
 def test_compound_cqc_envelope_checks_all_independent_component_signs() -> None:
     from types import SimpleNamespace as NS
     from struct_agent._vendor.shearwall_modeling.design.extractor import DesignDemandExtractor

@@ -1,6 +1,6 @@
 {
   "purpose": "same_implementation_regression_not_independent_validation",
-  "analysis_signature": "ea4c99379faba5a50b3a243ad5d07e00210b5843408a196c74ae6715c59d26a8",
+  "analysis_signature": "1e470f137720daf85db2261ed9a2c90dc2be85e3bf7162e2d5593a1b0ac3015b",
   "inputs": {
     "layout": {
       "path": "outputs/reference/fea_compound_20261031_002713_874954/layout.json",
@@ -11,8 +11,8 @@
       "sha256": "6b7c7e71f461caf2ecfcdef59ccd08c5c4255b2f0403cc5f3808410b9d35e0e7"
     },
     "analysis": {
-      "path": "outputs/reference/fea_compound_20261031_002713_874954/analyses/eval_00001.json",
-      "sha256": "3fe7291b2db8252690299be671f0bd17e523cffa5360b444c16b6c8fa7e846fc"
+      "path": "outputs/reference/fea_optimized_20261101_143528/analyses/eval_00001.json",
+      "sha256": "e59dd4d12266a46569e8d5cbf3beffc8d915614a32ffede1fe11b96aa5cf702d"
     }
   }
 }

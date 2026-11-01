@@ -1,9 +1,9 @@
 from dataclasses import replace
 import math
 import numpy as np
+import shapely
 from scipy.optimize import least_squares
 from shapely import affinity
-from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 from ..core.config import MaterialConfig
 from .constants import CONCRETE_COMPRESSIVE_STRENGTH_MPA, CONCRETE_TENSILE_STRENGTH_MPA, ReinforcementDesignConstants, effective_depth_m
@@ -11,20 +11,27 @@ from .results import (MaterialUsage, WallDesignDemand, WallReinforcementResult,
     CompoundWallDesignDemand, CompoundWallReinforcementResult, SectionEquilibrium)
 
 
-def section_fibers(polygon: BaseGeometry, spacing_mm: float) -> np.ndarray:
-    """Area-exact clipped cells: float64 [n,3]=(x,y,area), local mm/mm²."""
+def section_fibers(polygon: BaseGeometry, spacing_mm: float, *,
+                   cache: dict[tuple[bytes, float], np.ndarray] | None = None) -> np.ndarray:
+    """Read-only float64 [n,3]=(x,y,area), local mm/mm²; cache belongs to one evaluation."""
     if spacing_mm<=0:
         raise ValueError('Positive section integration spacing required')
+    key=polygon.wkb,spacing_mm
+    if cache is not None and key in cache:
+        return cache[key]
     xmin,ymin,xmax,ymax=polygon.bounds
-    cells=[]
-    for x in np.arange(xmin,xmax,spacing_mm):
-        for y in np.arange(ymin,ymax,spacing_mm):
-            cell=polygon.intersection(box(x,y,min(x+spacing_mm,xmax),min(y+spacing_mm,ymax)))
-            if cell.area>1e-8:
-                cells.append((cell.centroid.x,cell.centroid.y,cell.area))
-    result=np.asarray(cells,dtype=np.float64).reshape(-1,3)
+    xs,ys=np.arange(xmin,xmax,spacing_mm),np.arange(ymin,ymax,spacing_mm)
+    x,y=np.repeat(xs,len(ys)),np.tile(ys,len(xs))
+    cells=shapely.intersection(polygon,shapely.box(x,y,np.minimum(x+spacing_mm,xmax),np.minimum(y+spacing_mm,ymax)))
+    areas=shapely.area(cells)
+    mask=areas>1e-8
+    centers=shapely.centroid(cells[mask])
+    result=np.column_stack((shapely.get_x(centers),shapely.get_y(centers),areas[mask]))
     if not len(result) or not math.isclose(float(result[:,2].sum()),polygon.area,rel_tol=1e-8):
         raise ValueError('Incomplete section integration area')
+    result.setflags(write=False)
+    if cache is not None:
+        cache[key]=result
     return result
 
 
@@ -50,7 +57,12 @@ def section_equilibrium(concrete: np.ndarray, steel: np.ndarray, steel_area: np.
     bc,bs=basis(concrete),basis(steel)
     scale=fc_mpa*float(concrete[:,2].sum())
     demand=np.asarray((target[0],target[1]*1000/radius,target[2]*1000/radius))
+    last_q: np.ndarray | None = None
+    last_value: tuple[np.ndarray, np.ndarray] | None = None
     def evaluate(q: np.ndarray) -> tuple[np.ndarray,np.ndarray]:
+        nonlocal last_q,last_value
+        if last_q is not None and np.array_equal(q,last_q):
+            return last_value[0].copy(),last_value[1].copy()
         ec,es=bc@q,bs@q
         sc,tc=concrete_response(ec,fc_mpa);cs,ct=concrete_response(es,fc_mpa)
         ss=np.clip(200000*es,-fy_mpa,fy_mpa)
@@ -62,7 +74,8 @@ def section_equilibrium(concrete: np.ndarray, steel: np.ndarray, steel_area: np.
         residual=np.r_[(force-demand)/scale,max(0.,ec[ic]-.0033)/.0033,max(0.,-.01-es[its])/.01]
         jac=np.vstack((tangent/scale,bc[ic]/.0033 if ec[ic]>.0033 else np.zeros(3),
                        -bs[its]/.01 if es[its]<-.01 else np.zeros(3)))
-        return residual,jac
+        last_q,last_value=q.copy(),(residual,jac)
+        return residual.copy(),jac.copy()
     elastic=bc.T@((fc_mpa/.002*concrete[:,2])[:,None]*bc)+bs.T@((200000*steel_area)[:,None]*bs)
     initial=np.linalg.solve(elastic,demand)
     solutions=[]
@@ -82,7 +95,8 @@ def section_equilibrium(concrete: np.ndarray, steel: np.ndarray, steel_area: np.
 
 
 def design_compound_section(demand: CompoundWallDesignDemand, material: MaterialConfig,
-                            constants: ReinforcementDesignConstants, *, spacing_mm: float=20.) -> CompoundWallReinforcementResult:
+                            constants: ReinforcementDesignConstants, *, spacing_mm: float=20.,
+                            fiber_cache: dict[tuple[bytes, float], np.ndarray] | None = None) -> CompoundWallReinforcementResult:
     """Joint N-Mx-My design with shared boundary steel counted only once.
 
     Continuous steel areas, not a bar-detailing drawing. Full physical connected
@@ -91,16 +105,16 @@ def design_compound_section(demand: CompoundWallDesignDemand, material: Material
     section=demand.section;cx,cy=section.centroid
     polygon=affinity.scale(affinity.translate(section.polygon,-cx,-cy),1000,1000,origin=(0,0))
     boundary=affinity.scale(affinity.translate(section.boundary,-cx,-cy),1000,1000,origin=(0,0))
-    concrete=section_fibers(polygon,spacing_mm)
+    concrete=section_fibers(polygon,spacing_mm,cache=fiber_cache)
     vertices=np.asarray([(x,y,0.) for x,y in polygon.exterior.coords])
     concrete=np.vstack((concrete,vertices))
     inner=polygon.buffer(-constants.cover_to_centroid_mm)
     inner_boundary=inner.intersection(boundary)
     if inner_boundary.is_empty:
         raise ValueError(f'No room for covered boundary reinforcement: {section.wall_ids}')
-    bars_boundary=section_fibers(inner_boundary,spacing_mm)
+    bars_boundary=section_fibers(inner_boundary,spacing_mm,cache=fiber_cache)
     inside_web=inner.difference(boundary)
-    bars_web=section_fibers(inside_web,spacing_mm) if inside_web.area>1e-8 else np.empty((0,3))
+    bars_web=section_fibers(inside_web,spacing_mm,cache=fiber_cache) if inside_web.area>1e-8 else np.empty((0,3))
     steel=np.vstack((bars_boundary,bars_web))
     boundary_weights=bars_boundary[:,2]/bars_boundary[:,2].sum()*boundary.area
     web_area=max(0.,polygon.area-boundary.area)

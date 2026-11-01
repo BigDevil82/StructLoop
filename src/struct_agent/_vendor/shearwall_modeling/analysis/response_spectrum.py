@@ -1,5 +1,9 @@
 import math
 from typing import Any
+from types import SimpleNamespace
+import numpy as np
+import scipy.sparse as sp
+from scipy.sparse.linalg import eigsh
 import openseespy.opensees as ops
 from ..builders.base import AnalysisModelContext
 from .combinations import cqc, srss
@@ -7,6 +11,39 @@ from .member_forces import extract_beam_force_tuple, extract_wall_force_tuple, e
 from ..geometry.wall_piers import compound_wall_sections
 from .modal import identify_dominant_modes, modal_periods_from_eigenvalues
 from .results import DirectionResponse, ModalSummary, ResponseSpectrumCaseResult, StoryMetric
+
+
+def _solve_sparse_eigen(**buffers: Any) -> None:
+    """Solve original CSR K,M [n,n]; retain OpenSees m/rad DOFs and N-m units.
+
+    Eigenvectors [mode,n] and omega² [mode] are written into OpenSees buffers.
+    No stiffness, mass or calibration state is retained between calls.
+    """
+    n,nnz,count=buffers['num_eqn'],buffers['nnz'],buffers['num_modes']
+    ptr=np.frombuffer(buffers['index_ptr'],dtype=np.int32,count=n+1)
+    indices=np.frombuffer(buffers['indices'],dtype=np.int32,count=nnz)
+    stiffness,mass=(sp.csr_matrix((np.frombuffer(buffers[key],dtype=np.float64,count=nnz),indices,ptr),
+                                 shape=(n,n)).copy() for key in ('k_values','m_values'))
+    for matrix in (stiffness,mass):
+        asymmetry=sp.linalg.norm(matrix-matrix.T)/max(sp.linalg.norm(matrix),1e-300)
+        if not np.isfinite(asymmetry) or asymmetry>=1e-12:
+            raise ValueError('Sparse eigen matrices must be finite and symmetric')
+    values,vectors=eigsh(stiffness,k=count,M=mass,sigma=0.,which='LM',tol=1e-12,maxiter=1000,
+                        v0=np.random.default_rng(42).normal(size=n))
+    order=np.argsort(values)
+    values,vectors=values[order],vectors[:,order]
+    if not np.all(np.isfinite(values)) or np.any(values<=1e-12):
+        raise ValueError('Invalid/nonpositive eigenvalue; possible mechanism')
+    for value,vector in zip(values,vectors.T):
+        force,inertia=stiffness@vector,mass@vector
+        residual=np.linalg.norm(force-value*inertia)/(np.linalg.norm(force)+abs(value)*np.linalg.norm(inertia))
+        if not np.isfinite(residual) or residual>=1e-8:
+            raise ValueError('Sparse eigen residual exceeds 1e-8')
+    if not np.allclose(vectors.T@(mass@vectors),np.eye(count),rtol=0.,atol=1e-8):
+        raise ValueError('Sparse eigenvectors are not mass-orthonormal')
+    np.frombuffer(buffers['eigenvalues'],dtype=np.float64,count=count)[:]=values
+    np.frombuffer(buffers['eigenvectors'],dtype=np.float64,count=count*n)[:]=vectors.T.ravel()
+
 
 class ResponseSpectrumAnalyzer:
 
@@ -133,10 +170,11 @@ class ResponseSpectrumAnalyzer:
         # Three inertial DOFs per rigid floor; ARPACK requires fewer modes than
         # the mass rank. More modes are a convergence check, not a model variant.
         maximum_modes = self.context.num_stories*3-1
-        num_modes_required = min(self.context.config.num_modes,maximum_modes)
+        num_modes_required = min(max(9,self.context.config.num_modes),maximum_modes)
+        solver=SimpleNamespace(solve=_solve_sparse_eigen)
         while True:
             self.context.logger.info(f'提取 {num_modes_required} 阶振型并检查参与质量')
-            eigen_values = ops.eigen('-genBandArpack',num_modes_required)
+            eigen_values = ops.eigen('PythonSparse',num_modes_required,{'solver':solver,'scheme':'CSR'})
             returned = ops.modalProperties('-return')
             if not isinstance(returned,dict):
                 raise RuntimeError('modalProperties did not return modal participation data')

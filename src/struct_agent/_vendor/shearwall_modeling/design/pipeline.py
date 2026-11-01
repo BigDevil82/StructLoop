@@ -30,9 +30,10 @@ class ReinforcementDesignPipeline:
         by_key={(r.wall_id,r.story):r for r in wall_results}
         shear_checks={(m.wall_id,m.story):m.is_shear_pressure_passed for m in self.analysis_result.wall_uls_metrics}
         compound_results=[]
+        fiber_cache={}  # Geometry only; discarded after this evaluation, never shared across layouts.
         for demand in self.extractor.compound_demands:
             section=demand.section
-            result=design_compound_section(demand,story_profiles[section.story].material,self.constants)
+            result=design_compound_section(demand,story_profiles[section.story].material,self.constants,fiber_cache=fiber_cache)
             compound_results.append(result)
             horizontal_ratio=max(by_key[u.wall_id,u.story].horizontal_distributed_steel_mm2_per_m/(u.thickness*1e6)
                                  for u in section.units)

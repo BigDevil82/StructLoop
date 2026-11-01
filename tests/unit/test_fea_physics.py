@@ -201,24 +201,79 @@ def test_insufficient_modal_mass_cannot_produce_a_pass() -> None:
         analyzer.extract_modal_summary([1.,.5],props)
 
 
-def test_mode_extraction_increases_until_both_directions_have_enough_mass(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('enough_at_start',[False,True])
+def test_mode_extraction_increases_until_both_directions_have_enough_mass(monkeypatch: pytest.MonkeyPatch,enough_at_start: bool) -> None:
     from struct_agent._vendor.shearwall_modeling.analysis.response_spectrum import ResponseSpectrumAnalyzer
     from struct_agent._vendor.shearwall_modeling.analysis import response_spectrum
     calls=[]
     for name in ('constraints','numberer','system','test','algorithm','integrator','analysis'):
         monkeypatch.setattr(response_spectrum.ops,name,lambda *args:None)
-    def eigen(method: str,count: int) -> list[float]:
+    def eigen(method: str,count: int,options: dict) -> list[float]:
+        assert method=='PythonSparse' and options['scheme']=='CSR' and callable(options['solver'].solve)
         calls.append(count);return [10.+i for i in range(count)]
     def properties(*args: object) -> dict:
         n=calls[-1]
-        return {'eigenLambda':[10.+i for i in range(n)],'partiMassRatiosMX':[40. if n==2 else 20.]*n,
-            'partiMassRatiosMY':[45. if n==2 else 20.]*n,'partiMassRatiosRMZ':[.1]*n}
+        ratio=11. if enough_at_start else 8.
+        return {'eigenLambda':[10.+i for i in range(n)],'partiMassRatiosMX':[ratio]*n,
+            'partiMassRatiosMY':[ratio]*n,'partiMassRatiosRMZ':[.1]*n}
     monkeypatch.setattr(response_spectrum.ops,'eigen',eigen)
     monkeypatch.setattr(response_spectrum.ops,'modalProperties',properties)
-    context=NS(bbox=(0.,1.,0.,1.),wall_story_element_units=[],num_stories=3,config=NS(num_modes=2,seismic=NS(periods=[0.,6.])),logger=NS(info=lambda *args:None))
+    context=NS(bbox=(0.,1.,0.,1.),wall_story_element_units=[],num_stories=5,config=NS(num_modes=6,seismic=NS(periods=[0.,6.])),logger=NS(info=lambda *args:None))
     values,_,summary=ResponseSpectrumAnalyzer(context).run_modal_case()
-    assert calls==[2,5] and len(values)==5
-    assert summary.mass_participation_x_pct==100. and summary.mass_participation_y_pct==100.
+    assert calls==([9] if enough_at_start else [9,12]) and len(values)==calls[-1]
+    expected=99. if enough_at_start else 96.
+    assert summary.mass_participation_x_pct==expected and summary.mass_participation_y_pct==expected
+
+
+@pytest.fixture
+def sparse_eigen_buffers() -> dict:
+    import numpy as np
+    n=30
+    return {'num_eqn':n,'nnz':n,'num_modes':2,'index_ptr':np.arange(n+1,dtype=np.int32),
+        'indices':np.arange(n,dtype=np.int32),'k_values':np.arange(1,n+1,dtype=np.float64),
+        'm_values':np.r_[np.ones(22),np.zeros(8)],'eigenvalues':np.full(2,np.nan),
+        'eigenvectors':np.full(2*n,np.nan)}
+
+
+def test_sparse_eigen_solves_generalized_problem_with_massless_dofs(sparse_eigen_buffers: dict) -> None:
+    import numpy as np
+    from struct_agent._vendor.shearwall_modeling.analysis.response_spectrum import _solve_sparse_eigen
+    _solve_sparse_eigen(**sparse_eigen_buffers)
+    np.testing.assert_allclose(sparse_eigen_buffers['eigenvalues'],[1.,2.],rtol=1e-12)
+    vectors=sparse_eigen_buffers['eigenvectors'].reshape(2,30)
+    np.testing.assert_allclose((vectors*sparse_eigen_buffers['m_values'])@vectors.T,np.eye(2),atol=1e-12)
+
+
+@pytest.mark.parametrize('failure',['nonpositive','nonfinite','residual','orthogonality'])
+def test_sparse_eigen_rejects_invalid_results_before_writing_buffers(sparse_eigen_buffers: dict,
+        monkeypatch: pytest.MonkeyPatch,failure: str) -> None:
+    import numpy as np
+    from struct_agent._vendor.shearwall_modeling.analysis import response_spectrum
+    values=np.array([1.,2.]);vectors=np.eye(30)[:,:2]
+    if failure=='nonpositive':values[0]=-1.
+    elif failure=='nonfinite':values[0]=np.nan
+    elif failure=='residual':vectors[:,0]=np.eye(30)[:,3]
+    else:values[1]=1.;vectors[:,1]=vectors[:,0]
+    monkeypatch.setattr(response_spectrum,'eigsh',lambda *a,**kw:(values,vectors))
+    with pytest.raises(ValueError):response_spectrum._solve_sparse_eigen(**sparse_eigen_buffers)
+    assert np.isnan(sparse_eigen_buffers['eigenvalues']).all()
+    assert np.isnan(sparse_eigen_buffers['eigenvectors']).all()
+
+
+def test_equilibrium_callbacks_return_independent_solver_buffers(monkeypatch: pytest.MonkeyPatch) -> None:
+    import numpy as np
+    from struct_agent._vendor.shearwall_modeling.design import wall
+    original=wall.least_squares
+    def checked(fun,initial,*,jac,**kwargs):
+        residual,tangent=fun(initial),jac(initial)
+        expected_residual,expected_tangent=residual.copy(),tangent.copy()
+        residual[:]=123.;tangent[:]=456.
+        np.testing.assert_array_equal(fun(initial),expected_residual)
+        np.testing.assert_array_equal(jac(initial),expected_tangent)
+        return original(fun,initial,jac=jac,**kwargs)
+    monkeypatch.setattr(wall,'least_squares',checked)
+    concrete=np.array([[-50.,-100.,20000.],[50.,-100.,20000.],[-50.,100.,20000.],[50.,100.,20000.]])
+    assert wall.section_equilibrium(concrete,concrete,np.full(4,400.),(100000.,0.,0.),19.1,360.,'compression').passed
 
 
 def test_torsion_checks_floor_displacement_in_addition_to_story_drift(monkeypatch: pytest.MonkeyPatch) -> None:
