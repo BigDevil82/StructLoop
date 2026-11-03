@@ -123,7 +123,7 @@ def test_session_construction_failure_is_audited_and_stops_execution(env: Optimi
     assert env.status == "AWAITING_REVIEW"
 
 
-def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4) -> OptimizationEnvironment:
+def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4, design_review: bool=False) -> OptimizationEnvironment:
     """Synthetic responses/diagnostics confined to tests; never physical evidence."""
     from dataclasses import fields,asdict
     from tests.unit.test_search_feedback import local_case
@@ -145,7 +145,7 @@ def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4) -> Optimiza
             raw={f.name:True if f.type is bool else 0 if f.type is int else 1. if f.type is float else ''
                 for f in fields(ParametricAnalysisResult)}
             raw.update(feasible=passed,design_passed=passed,design_failed_wall_count=0 if passed else 1,
-                material_concrete_kg=100000. if initial else 99000.,material_steel_kg=1000.,
+                material_concrete_kg=100000. if initial else 101000. if mode=='cost_increase' else 99000.,material_steel_kg=1000.,
                 torsion_ratio=1.2,period_ratio=.8,max_drift_ratio=.0005,
                 max_wall_axial_ratio=.2,max_wall_axial_limit=.5,max_wall_shear_ratio=.1,max_wall_shear_limit=.2,
                 max_beam_shear_ratio=.196 if initial else .13,max_beam_shear_limit=.2)
@@ -157,6 +157,7 @@ def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4) -> Optimiza
                 'combo_design_shear_n':{'test':ratio*original.denominator_n}})
             path=self.diagnostics_directory/evaluation_id;path.mkdir(parents=True)
             write_json(path/'members.json',{'fidelity':'mock','units':{'length':'m','force':'N','stress':'Pa'},'members':[member.model_dump()]})
+            write_json(path/'checks.json',{'overall':{'passed':passed},'directions':{}})
             return AnalysisRecord(evaluation_id=evaluation_id,layout_id=candidate.layout_id,design_id=parameters.design_id,
                 condition_id=conditions.condition_id,fidelity='mock',status='SUCCESS',solver='synthetic_test',solver_version='1',
                 elapsed_s=0.,feasible=passed,raw=asdict(ParametricAnalysisResult(**raw)),error=None)
@@ -170,7 +171,7 @@ def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4) -> Optimiza
             self.optimizer.problem.results.append((seed,result))
         def summary(self):return {'termination':'ready','completed_generations':0,'local_calibration_samples':0}
     env=OptimizationEnvironment('local_mock_only',(layout,),service,Session,tmp_path,rooms=rooms,spec=spec,
-        local_config=LocalAdjustmentConfig(target_utilization=.95,steps_m=(.1,),max_trials=2))
+        local_config=LocalAdjustmentConfig(target_utilization=.95,steps_m=(.1,),max_trials=2),design_review=design_review)
     env.initialize_design(design)
     return env
 
@@ -229,3 +230,171 @@ def test_local_budget_exhaustion_closes_action_and_respects_trial_limit(tmp_path
     state=env.observe()
     assert state.fea_calls_used==2 and 'ADJUST_LOCAL_LAYOUT' not in state.allowed_actions
     env.step(RulePolicy().choose(state));assert env.status=='COMPLETED'
+
+
+def review_decision(env: OptimizationEnvironment, action: str, **changes) -> Decision:
+    from struct_agent.schemas.state import DesignReview, DesignModification
+    state=env.observe()
+    instruction=None
+    if action=='PROPOSE_MODIFICATION':
+        instruction=DesignModification(operation='move_wall_tip',source_evaluation_id=state.design_evidence['evaluation_id'],
+            source_layout_sha256=state.design_evidence['layout_sha256'],target_member_id='wl',connected_member_id='b',
+            endpoint='end',delta_length_m=-.1,expected_effect='Synthetic test: longer beam span')
+        instruction=instruction.model_copy(update=changes)
+    return Decision(action=action,reason='Synthetic review test',evidence_refs=state.evidence_refs,
+        review=DesignReview(diagnosis='Synthetic short beam review',cause_hypothesis='Test hypothesis only',
+            affected_member_ids=('b',),assessment='Compare the actual trial before accepting',unresolved=('Test only',)),
+        modification=instruction)
+
+
+def test_design_review_receives_actual_plan_and_can_finish_without_modification(tmp_path: Path) -> None:
+    env=local_env(tmp_path,design_review=True)
+    state=env.observe();e=state.design_evidence
+    assert 'layout' not in e and 'rooms' not in e and 'member_checks' not in e
+    assert e['conditions']['stories'] and e['plan_summary']['room_count']==1
+    env.step(review_decision(env,'FINALIZE'))
+    assert env.status=='COMPLETED' and len(env.evaluator.records)==1 and not env.sessions
+
+
+@pytest.mark.parametrize('accept',[True,False])
+def test_trial_requires_agent_judgment_and_does_not_replace_parent_early(tmp_path: Path,accept: bool) -> None:
+    env=local_env(tmp_path,design_review=True,budget=2)
+    parent=env.layout_id
+    state=env.step(review_decision(env,'PROPOSE_MODIFICATION'))
+    assert state.layout_id==parent and state.fea_calls_used==2
+    assert state.modification_feedback['before']['raw_response']['max_beam_shear_ratio']==.196
+    assert state.modification_feedback['after']['raw_response']['max_beam_shear_ratio']==.13
+    assert 'ACCEPT_MODIFICATION' in state.allowed_actions and 'FINALIZE' not in state.allowed_actions
+    env.step(review_decision(env,'ACCEPT_MODIFICATION' if accept else 'REJECT_MODIFICATION'))
+    assert (env.layout_id!=parent)==accept
+    assert len(env.evaluator.records)==2
+    if accept:
+        assert env._session().optimizer.problem.results[0][0].layout_id==env.layout_id
+
+
+@pytest.mark.parametrize('mode',['reject','fail'])
+def test_design_review_cannot_adopt_failed_or_worse_trial(tmp_path: Path,mode: str) -> None:
+    env=local_env(tmp_path,design_review=True,mode=mode)
+    parent=env.layout_id
+    state=env.step(review_decision(env,'PROPOSE_MODIFICATION'))
+    assert not state.modification_feedback['eligible_for_adoption'] and state.layout_id==parent
+    assert 'ACCEPT_MODIFICATION' not in state.allowed_actions and len(env.evaluator.records)==2
+
+
+def test_invalid_geometry_is_feedback_without_fea_and_stale_instruction_is_rejected(tmp_path: Path) -> None:
+    env=local_env(tmp_path,design_review=True)
+    state=env.step(review_decision(env,'PROPOSE_MODIFICATION',connected_member_id='missing'))
+    assert state.modification_feedback['status']=='GEOMETRY_REJECTED'
+    assert state.fea_calls_used==1 and env.execution_error is None
+    with pytest.raises(ValueError,match='currently reviewed'):
+        env.step(review_decision(env,'PROPOSE_MODIFICATION',source_evaluation_id='old'))
+    assert len(env.evaluator.records)==1
+
+
+def test_agent_may_accept_higher_material_cost_with_safe_checks(tmp_path: Path) -> None:
+    env=local_env(tmp_path,design_review=True,mode='cost_increase')
+    parent=env.layout_id
+    state=env.step(review_decision(env,'PROPOSE_MODIFICATION'))
+    feedback=state.modification_feedback
+    assert feedback['material_cost_after']>feedback['material_cost_before']
+    assert 'ACCEPT_MODIFICATION' in state.allowed_actions
+    env.step(review_decision(env,'ACCEPT_MODIFICATION'))
+    assert env.layout_id!=parent
+
+
+def test_agent_can_cite_new_physical_member_ids_from_trial_evidence(tmp_path: Path) -> None:
+    from struct_agent.schemas.agent import validate_decision
+    env=local_env(tmp_path,design_review=True)
+    state=env.step(review_decision(env,'PROPOSE_MODIFICATION'))
+    feedback={**state.modification_feedback,'after':{'member_checks':[{'member_id':'new_trial_pier'}]}}
+    state=state.model_copy(update={'modification_feedback':feedback})
+    decision=review_decision(env,'REJECT_MODIFICATION')
+    decision=decision.model_copy(update={'review':decision.review.model_copy(update={'affected_member_ids':('new_trial_pier',)})})
+    assert validate_decision(decision,state)==decision
+    with pytest.raises(ValueError,match='unknown members'):
+        validate_decision(decision,env.observe())
+
+
+def test_agent_queries_geometry_connections_and_paged_region_without_fea(tmp_path: Path) -> None:
+    from struct_agent.schemas.state import DesignQuery
+    env=local_env(tmp_path,design_review=True)
+    env.investigation_only=True
+    before=env.observe()
+    assert 'PROPOSE_MODIFICATION' not in before.allowed_actions
+    assert 'layout' not in before.design_evidence
+    def query(q: DesignQuery):
+        state=env.observe()
+        return env.step(Decision(action='QUERY_DESIGN',reason='Inspect before editing',evidence_refs=state.evidence_refs,query=q))
+    state=query(DesignQuery(tool='inspect_member',member_id='b'))
+    result=state.design_query_results[-1]['result']
+    assert result['axis_length_m']==2.
+    assert result['members'][0]['start']==[1.,3.]
+    assert result['endpoint_connections'][0]['connected_members'][0]['member_id']=='wl'
+    assert result['generation_provenance']['available'] is False
+    state=query(DesignQuery(tool='inspect_region',bounds_m=(-1.,-1.,5.,4.),limit=2))
+    result=state.design_query_results[-1]['result']
+    assert result['total_members']==5 and len(result['members'])==2 and result['next_offset']==2
+    state=query(DesignQuery(tool='inspect_region',bounds_m=(-1.,-1.,5.,4.),offset=2,limit=2))
+    assert state.design_query_results[-1]['result']['members'][0]['member_id']=='wr'
+    state=query(DesignQuery(tool='inspect_member',member_id='missing'))
+    assert 'error' in state.design_query_results[-1]['result']
+    state=query(DesignQuery(tool='get_design_overview'))
+    assert 'layout' not in state.design_query_results[-1]['result']
+    assert state.design_query_results[-1]['result']['plan_summary']['room_count']==1
+    assert state.fea_calls_used==1 and state.layout_id==before.layout_id and env.execution_error is None
+    assert all((env.directory/r['evidence_ref']).is_file() for r in state.design_query_results)
+    with pytest.raises(ValueError,match='not allowed'):
+        env.step(review_decision(env,'PROPOSE_MODIFICATION'))
+
+
+def test_query_trial_is_bound_to_trial_analysis_and_retained_design_stays_current(tmp_path: Path) -> None:
+    from struct_agent.schemas.state import DesignQuery
+    env=local_env(tmp_path,design_review=True)
+    parent=env.layout_id
+    env.step(review_decision(env,'PROPOSE_MODIFICATION'))
+    state=env.observe()
+    state=env.step(Decision(action='QUERY_DESIGN',reason='Inspect real trial',evidence_refs=state.evidence_refs,
+        query=DesignQuery(tool='inspect_member',source='trial',member_id='b')))
+    result=state.design_query_results[-1]['result']
+    assert result['evaluation_id']=='eval_00002' and result['axis_length_m']==pytest.approx(2.1)
+    assert state.design_evidence['evaluation_id']=='eval_00001' and state.layout_id==parent and state.fea_calls_used==2
+
+
+def test_short_beam_axis_coverage_is_not_reported_as_physical_clear_span(tmp_path: Path) -> None:
+    from struct_agent.services.diagnostics import inspect_member
+    env=local_env(tmp_path,design_review=True)
+    evidence=env._review_evidence(env.verified_results[env.layout_id][0][0])
+    import copy
+    evidence=copy.deepcopy(evidence)
+    evidence['layout']['members'][1]['end']=[1.056,3.]
+    evidence['layout']['members'].append({'member_id':'perpendicular_wall','role':'wall',
+        'start':[1.056,2.],'end':[1.056,4.],'adjacent_room_indices':[0]})
+    result=inspect_member(evidence,'b')
+    assert result['axis_length_m']==pytest.approx(.056)
+    assert all(c['exposed_axis_m']==pytest.approx(0.) for c in result['wall_footprint_axis_coverage'])
+    assert result['anomalies']['beam_axis_inside_wall_footprint']
+    assert 'clear_span_m' not in result
+    row={'start':[1.,3.+1e-13],'end':[3.,3.+1e-13],'role':'beam'}
+    provenance={'layout_sha256':evidence['layout_sha256'],'stages':{'before':[row]},
+        'preprocessing_beam_chains':[{'members':[row],'axis_chain_length_m':2.}],
+        'preprocessing_chain_rule':'synthetic collinear grouping'}
+    result=inspect_member(evidence,'b',provenance=provenance)
+    assert result['generation_provenance']['stages']['before']==[row]
+    assert len(result['generation_provenance']['preprocessing_beam_chains'])==1
+
+
+def test_generation_provenance_replay_binds_the_whole_layout() -> None:
+    import numpy as np
+    from tests.unit.test_search_feedback import local_case
+    from struct_agent.adapters.rcgnn import layout_from_prediction,trace_layout_generation
+    _,rooms,_,_=local_case()
+    ratios=np.full((1,16),.4,dtype=np.float32)
+    layout=layout_from_prediction(rooms,ratios,layout_id='synthetic_trace')
+    trace=trace_layout_generation(rooms,ratios,layout)
+    assert trace['verified'] and 'intersection_split' in trace['stages']
+    bad=layout.model_copy(update={'source':'mismatched_source'})
+    # Replay uses this source label, so geometry, not display metadata, must differ.
+    member=bad.members[0].model_copy(update={'end':(bad.members[0].end[0]+.01,bad.members[0].end[1])})
+    bad=bad.model_copy(update={'members':(member,)+bad.members[1:]})
+    with pytest.raises(ValueError,match='differs'):
+        trace_layout_generation(rooms,ratios,bad)

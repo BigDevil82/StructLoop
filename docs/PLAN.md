@@ -3,17 +3,16 @@
 > 2026-10-30用户决定：软件差异排查结束，采用[最终建模配置](final_model.md)中的完整有梁MVLEM方案。
 > 剩余差异作为已接受模型偏差，不再校准；比对代码、测试与运行文件已直接删除。当前继续Phase 4，回到建模前检查及优化/Agent工作。
 
-> 2026-10-28 用户执行规则更新：已发现的实现 bug 直接按正确逻辑修复，无需重复确认，不保留错误算法的旧版运行分支。
-> 仍须记录依据与验证、区分真实/mock，工程最终审查及未提供的工程条件独立处理。详见 AGENTS.md 第 7 条。
+> 2026-11-02用户调整：以完整住宅结构设计Agent为目标，按“实现能力→真实算例→发现问题→改进”推进；当前任务是自主审查与具体修改闭环。执行纪律以当前AGENTS.md为准。
 
 > 状态：v0.1 / 探索性设计。本文是本地 Codex 的项目执行说明，不是已经验证的论文结论。与 `RESEARCH_ROADMAP.md` 配合使用：前者管**怎么实现与验证**，后者管**为什么研究与如何演进**。
-> 优先级：**真实物理闭环 > 可复现实验 > Agent 决策研究 > DWG/报告等产品能力**。任何未核实的现有算法接口不得假定为事实。
+> 优先级：**布置合理与建筑功能 > 真实分析及必要校核满足 > 经济性**。先完成设计任务，再开展系统对照；DWG、多软件和UI后置。下面未更新的接口伪代码与实验矩阵属于历史设计参考，不是当前开发清单。
 
 ## 1. 研究目标与问题数学定义
 
 ### 1.1 一句话核心任务
 
-给定住宅建筑空间信息与工程设计条件，使用 **RC-GNN 生成剪力墙布置、CASINO 辅助固定布置下的参数优化、FEA 提供真实反馈**，由上层决策 Agent 判断继续参数优化还是切换布置方案，在有限分析预算内找到可验证的高质量可行设计，并支持工程师确认和成果交付。
+给定住宅建筑平面与设计条件，复用RC-GNN、CASINO、OpenSees，由Agent读取实际空间及工程证据、自主审查、提出具体修改、通过合法接口执行并真实复算，迭代交付合理且可行的结构方案；允许不修改或如实说明未解决问题，关键修改和最终方案保留工程师审核。
 
 **研究范围**：聚焦住宅建筑剪力墙结构的布置—参数协同；建筑平面本身不生成。优先以单个标准层、与现有 RC-GNN/CASINO 数据分布一致的算例验证；完整多层、DWG、跨软件、施工图为扩展。不得将图像/文本评价冒充结构验算。
 
@@ -33,8 +32,9 @@
 ### 1.3 Agent 状态与动作
 
 - 最小状态：`s_t = {case_id, current_layout_id, current_design_id, constraint_ratios, solver_status, best_feasible_cost, optimization_progress, action_history, fea_calls_used, fea_budget_remaining, approvals}`。保留具体受控版本，不靠聊天历史重建。
-- MVP 动作：`CONTINUE_OPTIMIZATION`（固定布置继续 CASINO+优化器）、`SWITCH_LAYOUT`（切换/重新生成候选 RC-GNN 布置）、`REPAIR_MODEL`（仅处理建模/求解异常）、`REQUEST_HUMAN_REVIEW`、`FINALIZE`。
-- `SWITCH_LAYOUT` 不隐含“LLM可以精确移动某片墙”。局部墙体编辑为后续扩展动作，须具备确定性几何操作与合法性校核。
+- 现有优化模式保留`CONTINUE_OPTIMIZATION`、`SWITCH_LAYOUT`和`ADJUST_LOCAL_LAYOUT`。自主审查模式使用`PROPOSE_MODIFICATION`、`ACCEPT_MODIFICATION`、`REJECT_MODIFICATION`、`REQUEST_HUMAN_REVIEW`和`FINALIZE`。
+- 审查包含一句诊断、原因假设、涉及构件、反馈判断及未解决问题；修改指令绑定源分析与布局。首个可执行操作是墙端调整，后续按真实任务需要增加布局与截面操作，不把墙端优化当作项目目标。
+- 当前交互为全局摘要+`QUERY_DESIGN`按需调用`get_design_overview`、`inspect_member`、`inspect_region`；程序计算几何/拓扑/邻接/异常，Agent主动调查并区分建模疑点和设计缺陷。`beam_199`调查期间禁止结构修改，不以56mm轴线段直接认定真实净跨。
 - 每个动作产生 `{action, reason, evidence_refs, cost_estimate, approval_required}`；执行后写入**真实**性能变化与分析资源消耗。有限预算、动作可行条件和人工确认由确定性状态机强制执行。
 - **待验证的候选决策原型**：先用规则过滤不合法动作，再按 `score(a)=α·预计约束改善 + β·预计可行概率提升 − γ·预计材料增量 − λ·预计FEA成本` 排序；预期量由历史同类动作、小规模试探或保守默认值估计，并记录不确定性。它只是第一版可复现的工程启发式，**不预先宣称为创新算法**。`[TODO: 待确认：收益估计方法和权重标定]`
 
@@ -43,7 +43,7 @@
 - **MVP 输入**：已清洗的建筑房间图、设计条件、现有 RC-GNN/CASINO 权重与配置、一个真实 FEA 后端；不要求先处理 DWG。
 - **最终输入**：建筑 `.dwg`、工程师自然语言需求、经确认的建筑/结构设计约束与必要补充资料。
 - **核心输出**：可行的布置 $L^*$ 与参数 $x^*$、分析模型、真实 FEA 和约束验算结果、完整执行轨迹、优化比较结果；后期增加结构 DWG、设计报告与可选施工图导出。
-- **最小科研成功**：至少跑通一个**真实** RC-GNN→CASINO→FEA→状态更新→二次决策→再次评价的闭环，并能在等预算条件下与固定工作流比较。Mock 闭环只证明工程软件链路无误，不证明研究假设成立。
+- **当前验收**：真实住宅生成→审查→Agent提出具体修改→程序校验→真实FEA→Agent评议→确定性采纳或回退→再次决策及结果交付。已有合理方案允许直接结束；未覆盖验算明确列出。Mock仅用于接口测试，不混入真实案例。
 
 ## 2. 当前目录与入口
 
@@ -141,11 +141,11 @@ ProjectSpec + RoomGraph
 
 > 当前为 Phase 4。早期能力审计、数据校验及工具迁移已完成基础实现；独立 Mock 业务流程及其专用测试已删除，保留的合成测试继续验证真实接口的预算、审批和异常处理。后续阶段仍是研究计划，不表示功能已实现。变更和验证记录写入本地 Git 提交说明。
 
-### Phase 4 — 决策策略与双层协同实验
+### Phase 4 — 自主设计审查与修改（当前）
 
-- **任务**：实现 `agents/{rule_policy,llm_policy,proposed}.py`、`evaluation/metrics.py`；先用规则策略跑通 `CONTINUE_OPTIMIZATION` 与 `SWITCH_LAYOUT`，再接入基础LLM策略与拟研究的状态/历史/预算感知策略。加入动作后实际收益记录和状态回放。
+- **任务**：在现有Schema、Policy及Environment中提供真实平面/构件/条件/验算证据；Agent指定具体修改，经现有几何门槛试算，再由Agent评议并经确定性条件采纳。保留既有专业计算、优化、缓存隔离和审计基础。
 - **验证命令**：`.venv/Scripts/python.exe -m pytest -q tests/unit/test_llm_policy.py tests/unit/test_optimization_env.py tests/unit/test_comparison.py`；`.venv/Scripts/python.exe -m pytest -q --run-real`。真实运行参数见 `docs/phase4_agent.md`。
-- **通过标准**：各策略共享相同候选集、评价器和预算；能复现一次“固定布置继续优化”和一次“切换布局”路径，决策证据可追踪；`REPAIR_MODEL` 与 `SWITCH_LAYOUT` 不混淆。
+- **通过标准**：证明Agent实际收到证据、提出有依据的具体修改并读取复算反馈；允许直接完成、拒绝修改或说明能力边界。总预算和步骤上限按任务设置，不要求每种动作固定5次FEA。不以策略得分作为当前验收。
 
 ### Phase 5 — Agent 交互与 Human-in-the-Loop
 
@@ -217,4 +217,4 @@ human_review:
 
 ---
 
-**当前任务**：继续Phase 4的建模前检查、参数优化与Agent验证；使用已选定的MVLEM建模器，不重启已结束的软件差异排查。
+**当前任务**：完成住宅自主审查与修改闭环，按实际失败逐步增加设计操作和必要校核；继续既定MVLEM配置，不重启软件差异排查，不提前开展大量Baseline/消融。

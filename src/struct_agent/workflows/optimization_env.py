@@ -10,7 +10,7 @@ from typing import Callable
 
 from struct_agent.adapters.casino_session import CasinoSession
 from struct_agent.adapters.casino import CasinoProblem
-from struct_agent.adapters.design_search import local_layout_candidates
+from struct_agent.adapters.design_search import local_layout_candidates, apply_design_modification
 from struct_agent._vendor.shearwall_optimization.surrogate_candidate import SurrogateCandidateEvaluator
 from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import ErrorRecord, LayoutCandidate, DesignCandidate, ProjectSpec, RoomGraph
@@ -19,7 +19,8 @@ from struct_agent.schemas.agent import (OptimizationState, validate_decision, Lo
 from struct_agent.schemas.layout import LocalLayoutProposal
 from struct_agent.schemas.state import Action, Decision
 from struct_agent.services.analysis import AnalysisService, AnalysisFailed
-from struct_agent.services.diagnostics import load_members
+from struct_agent.services.diagnostics import (load_members, design_review_evidence,
+    get_design_overview, inspect_member, inspect_region)
 from struct_agent.services.model_review import review_geometry, review_local_layout_change
 
 
@@ -33,7 +34,8 @@ class OptimizationEnvironment:
     def __init__(self, case_id: str, layouts: tuple[LayoutCandidate, ...],
                  evaluator: AnalysisService, factory: Callable[[LayoutCandidate, Path], CasinoSession],
                  directory: Path, *, rooms: RoomGraph | None=None, spec: ProjectSpec | None=None,
-                 local_config: LocalAdjustmentConfig | None=None) -> None:
+                 local_config: LocalAdjustmentConfig | None=None, design_review: bool=False,
+                 investigation_only: bool=False, generation_provenance: dict | None=None) -> None:
         if not layouts or len({x.layout_id for x in layouts}) != len(layouts):
             raise ValueError("A nonempty pool with unique layout IDs is required")
         self.layouts = {x.layout_id: x.model_copy(deep=True) for x in layouts}
@@ -48,6 +50,17 @@ class OptimizationEnvironment:
         self.event_count = 0
         self.execution_error: ErrorRecord | None = None
         self.rooms,self.spec,self.local_config=rooms,spec,local_config
+        self.design_review=design_review
+        if design_review and local_config is None:
+            raise ValueError('Design review requires authorized local execution and diagnostics')
+        self.review_cache: dict[str,dict] = {}
+        self.modification_feedback: dict = {}
+        self.pending_modification: tuple | None = None
+        self.modification_count=0
+        self.investigation_only=investigation_only
+        self.generation_provenance=generation_provenance
+        self.query_results: list[dict] = []
+        self.trial_evidence: dict | None = None
         if local_config is not None and (rooms is None or spec is None
                 or getattr(evaluator.solver,'diagnostics_directory',None) is None):
             raise ValueError('Local adjustment requires rooms, conditions and member diagnostics')
@@ -99,6 +112,16 @@ class OptimizationEnvironment:
                 allowed.append('ADJUST_LOCAL_LAYOUT')
             if not remaining or status in ("completed", "budget_exhausted"):
                 allowed.append("FINALIZE")
+        if self.design_review and self.status=='RUNNING':
+            allowed=['REQUEST_HUMAN_REVIEW','QUERY_DESIGN']
+            if self.pending_modification:
+                allowed.append('REJECT_MODIFICATION')
+                if self.modification_feedback['eligible_for_adoption']:
+                    allowed.append('ACCEPT_MODIFICATION')
+            else:
+                allowed.append('FINALIZE')
+                if best and remaining and not self.execution_error and not self.investigation_only:
+                    allowed.append('PROPOSE_MODIFICATION')
         refs = [str((self.evaluator.directory / f"{r.evaluation_id}.json").relative_to(self.directory)).replace("\\", "/") for r in records]
         if session and session.advance_count:
             refs.append((session.directory / f"steps/advance_{session.advance_count:05d}.json").relative_to(self.directory).as_posix())
@@ -109,6 +132,9 @@ class OptimizationEnvironment:
         if self.local_config:
             refs.append('local/authorization.json')
         refs.extend(o.evidence_ref for o in self.local_outcomes)
+        if self.design_review and self.modification_count:
+            refs.append(f'local/design_trial_{self.modification_count:05d}.json')
+        refs.extend(row['evidence_ref'] for row in self.query_results)
         refs=list(dict.fromkeys(refs))
         response={}
         if best and self.local_config:
@@ -116,6 +142,11 @@ class OptimizationEnvironment:
             response={k:float(raw[k]) for k in ('max_drift_ratio','torsion_ratio','period_ratio','material_concrete_kg','material_steel_kg')}
             response.update(max_beam_utilization=float(raw['max_beam_shear_ratio']/raw['max_beam_shear_limit']),
                 max_wall_utilization=float(raw['max_wall_shear_ratio']/raw['max_wall_shear_limit']))
+        evidence=self._review_evidence(best[0]) if self.design_review and best else {}
+        feedback={k:v for k,v in self.modification_feedback.items() if k not in ('before','after')}
+        if self.trial_evidence:
+            feedback['after']=get_design_overview(self.trial_evidence)
+            feedback['before']={k:self.modification_feedback['before'][k] for k in ('evaluation_id','raw_response')}
         return OptimizationState(case_id=self.case_id, fidelity=getattr(self.evaluator.solver, "fidelity", "full"),
             layout_id=self.layout_id, session_status=status,
             solver_status=latest.status if latest else "NOT_EVALUATED",
@@ -133,6 +164,9 @@ class OptimizationEnvironment:
             local_trials_used=len(self.local_outcomes),
             local_trials_remaining=max(0,self.local_config.max_trials-len(self.local_outcomes)) if self.local_config else 0,
             local_target_utilization=self.local_config.target_utilization if self.local_config else None,
+            design_review_enabled=self.design_review,design_evidence=get_design_overview(evidence) if evidence else {},
+            modification_feedback=feedback,design_query_results=tuple(self.query_results),
+            investigation_only=self.investigation_only,
             current_response=response,local_layout_choices=tuple(LocalLayoutChoice(candidate_id=p.layout.layout_id,
                 control_member_id=p.control_member_id,control_story=p.control_story,metric=p.metric,
                 control_utilization=p.control_utilization,operation=p.operation,
@@ -144,7 +178,26 @@ class OptimizationEnvironment:
             raise RuntimeError(f"Cannot execute while {self.status}")
         before = self.observe()
         validate_decision(decision, before)
-        if decision.action == "CONTINUE_OPTIMIZATION":
+        if decision.action=='QUERY_DESIGN':
+            self._query_design(decision)
+        elif decision.action=='PROPOSE_MODIFICATION':
+            try:
+                self._propose_modification(decision)
+            except Exception as exc:
+                self._execution_failure(exc,'design_modification')
+        elif decision.action in ('ACCEPT_MODIFICATION','REJECT_MODIFICATION'):
+            candidate,actual,result=self.pending_modification
+            if decision.action=='ACCEPT_MODIFICATION':
+                self.layouts[candidate.layout_id]=candidate
+                self.verified_results[candidate.layout_id]=[(actual,result)]
+                self.layout_id=candidate.layout_id
+                self.visited.add(candidate.layout_id)
+                self.query_results=[]
+            self.modification_feedback={**self.modification_feedback,'agent_action':decision.action,
+                'agent_review':decision.review.model_dump(),'adopted':decision.action=='ACCEPT_MODIFICATION',
+                'status':'ADOPTED' if decision.action=='ACCEPT_MODIFICATION' else 'REJECTED'}
+            self.pending_modification=None
+        elif decision.action == "CONTINUE_OPTIMIZATION":
             session = None
             try:
                 session = self._session()
@@ -176,7 +229,7 @@ class OptimizationEnvironment:
         else:
             self.status = "COMPLETED"
         self.history.append(decision.action)
-        if self.local_config and self.status=='RUNNING' and not self.execution_error:
+        if self.local_config and not self.design_review and self.status=='RUNNING' and not self.execution_error:
             try:
                 self._refresh_local()
             except Exception as exc:
@@ -190,6 +243,103 @@ class OptimizationEnvironment:
             "violation_delta": None if before.current_best_violation is None or after.current_best_violation is None
                 else before.current_best_violation - after.current_best_violation})
         return after
+
+    def _review_evidence(self, design: DesignCandidate) -> dict:
+        record=self._source_record(design)
+        if record.evaluation_id not in self.review_cache:
+            self.review_cache[record.evaluation_id]=design_review_evidence(self.layouts[design.layout_id],
+                self.rooms,design,self.spec,evaluation_id=record.evaluation_id,raw=record.raw,
+                directory=self.evaluator.solver.diagnostics_directory/record.evaluation_id,fidelity=record.fidelity)
+        return self.review_cache[record.evaluation_id]
+
+    def _query_design(self, decision: Decision) -> None:
+        """Execute one read-only professional query; no FEA or design changes."""
+        query=decision.query
+        before=self.observe()
+        evidence=self.trial_evidence if query.source=='trial' else self.review_cache.get(before.design_evidence.get('evaluation_id'))
+        try:
+            if evidence is None:raise ValueError('No verified analysis is available for the requested source')
+            if query.tool=='get_design_overview':result=get_design_overview(evidence)
+            elif query.tool=='inspect_member':
+                provenance=self.generation_provenance if self.generation_provenance and self.generation_provenance['layout_sha256']==evidence['layout_sha256'] else None
+                result=inspect_member(evidence,query.member_id,provenance=provenance)
+            else:result=inspect_region(evidence,query.bounds_m,offset=query.offset,limit=query.limit)
+        except ValueError as exc:
+            result={'error':str(exc)}
+        row={'query':query.model_dump(),'result':result,'fea_consumed':0}
+        (self.directory/'queries').mkdir(exist_ok=True)
+        # Query IDs count files, so clearing stale in-context results never overwrites audit.
+        index=len(list((self.directory/'queries').glob('query_*.json')))+1
+        row['evidence_ref']=f'queries/query_{index:05d}.json'
+        self.query_results.append(row)
+        write_json(self.directory/row['evidence_ref'],row)
+
+    def _propose_modification(self, decision: Decision) -> None:
+        """Evaluate without replacing the retained design; Agent reviews the result next."""
+        session=self.sessions.get(self.layout_id)
+        rows=(session.optimizer.problem.results if session else [])+self.verified_results.get(self.layout_id,[])
+        design,baseline=min(rows,key=lambda row:SurrogateCandidateEvaluator.rank_key(row[1]))
+        source=self._source_record(design)
+        before=self._review_evidence(design)
+        self.modification_count+=1
+        self.trial_evidence=None
+        feedback={'instruction':decision.modification.model_dump(),'proposal_review':decision.review.model_dump(),
+            'source_evaluation_id':source.evaluation_id,'adopted':False}
+        try:
+            candidate=apply_design_modification(self.layouts[self.layout_id],self.rooms,design,decision.modification,
+                protected_member_ids=frozenset(self.local_config.protected_member_ids))
+            key=self._trial_key(candidate,design)
+            if key in self.local_tried:
+                raise ValueError('Geometry and parameters already evaluated; choose a different modification or stop')
+        except ValueError as exc:
+            feedback.update(status='GEOMETRY_REJECTED',reason=str(exc),eligible_for_adoption=False,
+                fea_consumed=0)
+        else:
+            self.local_tried.add(key)
+            next_design=design.model_copy(update={'layout_id':candidate.layout_id})
+            try:
+                actual,result,record=self._evaluate_design(candidate,next_design)
+            except AnalysisFailed as exc:
+                feedback.update(status=exc.record.status,error=exc.record.error.model_dump(),
+                    eligible_for_adoption=False,fea_consumed=1)
+            else:
+                after=design_review_evidence(candidate,self.rooms,actual,self.spec,
+                    evaluation_id=record.evaluation_id,raw=record.raw,
+                    directory=self.evaluator.solver.diagnostics_directory/record.evaluation_id,fidelity=record.fidelity)
+                self.trial_evidence=after
+                new_failures=[k for k,v in source.raw.items() if k.endswith('_passed') and v is True and record.raw[k] is not True]
+                for key in ('design_failed_beam_count','design_failed_wall_count'):
+                    if record.raw[key]>source.raw[key]:new_failures.append(key)
+                old_issues={(i['code'],tuple(i['source_member_ids'])) for i in before['geometry_review']['issues']}
+                new_issues=[i for i in after['geometry_review']['issues']
+                    if (i['code'],tuple(i['source_member_ids'])) not in old_issues]
+                def failed_member_checks(evidence: dict) -> set[tuple]:
+                    return {(tuple(row['source_member_ids']),p['story'],kind)
+                        for row in evidence['member_checks'] for p in row['problems']
+                        for kind in (('shear',) if not p['shear_passed'] else ())+
+                            (('reinforcement',) if p['reinforcement_passed'] is False else
+                             ('reinforcement_unchecked',) if p['reinforcement_passed'] is None else ())}
+                new_member_failures=sorted(failed_member_checks(after)-failed_member_checks(before))
+                violation=lambda r:sum(r.metrics['normalized_violations'].values())
+                eligible=not new_failures and not new_issues and not new_member_failures and (
+                    result.feasible or (not baseline.feasible and violation(result)<=violation(baseline)+1e-12))
+                # The retained plan/rooms are already in state. Supply every trial
+                # member check and changed segment without repeating architecture.
+                before_keys=('evaluation_id','layout_sha256','design','raw_response','global_checks','geometry_review')
+                after_keys=before_keys+('direction_checks','member_checks','coverage')
+                trial_view={k:after[k] for k in after_keys}
+                trial_view['changed_members']=[b.model_dump() for a,b in zip(self.layouts[self.layout_id].members,candidate.members) if a!=b]
+                trial_view['unchanged_geometry_from_layout_sha256']=before['layout_sha256']
+                feedback.update(status='AWAITING_AGENT_ASSESSMENT',eligible_for_adoption=eligible,
+                    new_failed_checks=new_failures,new_geometry_issues=new_issues,
+                    new_member_failures=new_member_failures,fea_consumed=1,
+                    before={k:before[k] for k in before_keys},after=trial_view,
+                    material_cost_before=baseline.objectives['material_cost'],
+                    material_cost_after=result.objectives['material_cost'],
+                    adoption_gate='Agent must explicitly accept; no new failed global checks, increased failure counts, new geometry issues or worse total violation. Cost increase alone is permitted.')
+                self.pending_modification=(candidate,actual,result)
+        self.modification_feedback=feedback
+        write_json(self.directory/f'local/design_trial_{self.modification_count:05d}.json',feedback)
 
     def _source_record(self, design: DesignCandidate):
         return next(r for r,d in reversed(list(zip(self.evaluator.records,self.evaluator.designs)))
@@ -221,7 +371,8 @@ class OptimizationEnvironment:
         try:
             actual,result,_=self._evaluate_design(self.layouts[self.layout_id],design)
             self.verified_results[self.layout_id]=[(actual,result)]
-            self._refresh_local()
+            self.local_tried.add(self._trial_key(self.layouts[self.layout_id],actual))
+            if not self.design_review:self._refresh_local()
         except Exception as exc:
             self._execution_failure(exc,'initial_design')
         after=self.observe()

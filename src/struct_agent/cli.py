@@ -59,7 +59,7 @@ def main() -> None:
     if args.command == "generate":
         import numpy as np
         import torch
-        from struct_agent.adapters.rcgnn import RCGNNAdapter, graph_from_dxf, layout_from_prediction
+        from struct_agent.adapters.rcgnn import RCGNNAdapter, graph_from_dxf, layout_from_prediction, trace_layout_generation
         case = None
         if args.dxf is None:
             from struct_agent.io.case import load_generation_case
@@ -83,6 +83,11 @@ def main() -> None:
         layout = layout_from_prediction(rooms, ratios, layout_id=args.run.name)
         write_json(args.run/"room_graph.json",rooms.model_dump())
         write_json(args.run/"layout.json",layout.model_dump())
+        trace = trace_layout_generation(rooms, ratios, layout)
+        write_json(args.run/'junction_preprocessing.json', {
+            'layout_sha256': trace['layout_sha256'], 'units': trace['units'],
+            'original_openings_available': trace['original_openings_available'],
+            'junction_closures': trace['junction_closures']})
         from struct_agent.services.model_review import review_geometry
         review = review_geometry(layout)
         write_json(args.run/'geometry_review.json', review.model_dump())

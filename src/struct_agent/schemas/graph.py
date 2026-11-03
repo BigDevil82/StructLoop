@@ -25,6 +25,9 @@ class RoomGraph(Contract):
     room_polygons: tuple[tuple[tuple[float, float], ...], ...]
     masks: tuple[tuple[tuple[tuple[float, float], ...], ...], ...]
     category: Literal[0, 1, 2]
+    # Original DXF footprints, global XY m [opening, vertex, xy]. None means
+    # unavailable (older graphs); () means the source was checked and has none.
+    opening_polygons: tuple[tuple[tuple[float, float], ...], ...] | None = None
 
     @model_validator(mode="after")
     def dimensions(self) -> RoomGraph:
@@ -45,4 +48,12 @@ class RoomGraph(Contract):
         for mask in self.masks:
             if len(mask) != 8 or any(not 0 <= a <= b <= 1 for intervals in mask for a, b in intervals):
                 raise ValueError("Expected 8 half-edge masks with intervals in [0,1]")
+        if self.opening_polygons is not None:
+            from shapely.geometry import Polygon
+            for points in self.opening_polygons:
+                if len(points) < 4:
+                    raise ValueError('Expected original door/window polygon footprints')
+                polygon = Polygon(points)
+                if not polygon.is_valid or polygon.area <= 0:
+                    raise ValueError('Invalid door/window polygon footprint')
         return self

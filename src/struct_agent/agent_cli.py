@@ -43,12 +43,19 @@ def main() -> None:
     parser.add_argument("--layout-approval", type=Path, action="append", default=[],
                         help="Operator approval bound to exact candidate, conditions and run purpose")
     parser.add_argument('--enable-local-adjustment',action='store_true',help='Authorize bounded geometry-checked local FEA trials')
+    parser.add_argument('--design-review',action='store_true',help='Agent reviews actual plan/checks, proposes typed edits and assesses trials')
+    parser.add_argument('--investigation-only',action='store_true',help='Read-only Agent investigation; structural edits are prohibited')
+    parser.add_argument('--generation-run',type=Path,help='Generation run containing rooms, ratios and layout, verified by replay')
     parser.add_argument('--local-step-m',type=float,nargs='+',default=[.1,.2])
     parser.add_argument('--local-target-utilization',type=float,default=1.)
     parser.add_argument('--local-max-trials',type=int,default=4)
     parser.add_argument('--local-max-candidates',type=int,default=4)
     parser.add_argument('--protect-member',action='append',default=[])
     args = parser.parse_args()
+    if args.design_review and (args.policy!='llm' or not args.enable_local_adjustment or not args.initial_design):
+        parser.error('--design-review requires --policy llm, --enable-local-adjustment and --initial-design')
+    if (args.investigation_only or args.generation_run) and not args.design_review:
+        parser.error('Investigation and generation queries require --design-review')
     if args.budget_fea < 1 or args.max_steps < 1:
         parser.error("Budget and max-steps must be positive")
     local_config=LocalAdjustmentConfig(steps_m=tuple(args.local_step_m),
@@ -71,6 +78,15 @@ def main() -> None:
                        population_size=args.population, generations=args.generations, screening_threshold=args.screening_threshold)
     inputs = {**assets, "rooms": args.rooms, "spec": args.spec,
               **{f"layout_{i}": p for i, p in enumerate(args.layout)}}
+    provenance=None
+    if args.generation_run:
+        import numpy as np
+        from struct_agent.adapters.rcgnn import trace_layout_generation
+        generation_rooms=RoomGraph.model_validate_json((args.generation_run/'room_graph.json').read_text(encoding='utf-8'))
+        if generation_rooms!=rooms:raise ValueError('Generation rooms do not match this design')
+        provenance=trace_layout_generation(rooms,np.load(args.generation_run/'ratios.npy',allow_pickle=False),layouts[0])
+        inputs['generation_ratios']=args.generation_run/'ratios.npy'
+        inputs['generation_manifest']=args.generation_run/'manifest.json'
     if args.initial_design:
         inputs["initial_design"] = args.initial_design
     approvals: dict[str, LayoutApproval] = {}
@@ -85,12 +101,17 @@ def main() -> None:
     chat_cfg = None
     if args.policy == "llm":
         chat_cfg = ChatConfig.model_validate_json(args.llm_config.read_text(encoding="utf-8"))
+        if args.design_review:
+            chat_cfg=chat_cfg.model_copy(update={'max_tokens':8192,'timeout_s':60.})
         key = read_api_key(args.env_file, chat_cfg.api_key_env)
         inputs["llm_config"] = args.llm_config
     create_run(args.run, seed=args.seed, inputs=inputs, config={"casino": cfg.model_dump(mode="json"),
         "budget": args.budget_fea, "max_steps": args.max_steps, "policy": args.policy,
         "purpose": args.purpose, "case_id": args.case_id, "fidelity": "full",
-        'local_adjustment':local_config.model_dump() if local_config else None})
+        'local_adjustment':local_config.model_dump() if local_config else None,
+        'design_review':args.design_review,'investigation_only':args.investigation_only,
+        'effective_chat_config':chat_cfg.model_dump() if chat_cfg else None})
+    if provenance:write_json(args.run/'generation_provenance.json',provenance)
     start = time.monotonic()
     evaluator = AnalysisService(OpenSeesAdapter(log_directory=args.run / "solver_logs",
                                 diagnostics_directory=args.run/'diagnostics' if local_config else None),
@@ -98,7 +119,8 @@ def main() -> None:
     def factory(layout: LayoutCandidate, directory: Path) -> CasinoSession:
         return CasinoSession(layout, rooms, spec, evaluator, cfg, directory=directory)
     env = OptimizationEnvironment(args.case_id, layouts, evaluator, factory, args.run,
-        rooms=rooms,spec=spec,local_config=local_config)
+        rooms=rooms,spec=spec,local_config=local_config,design_review=args.design_review,
+        investigation_only=args.investigation_only,generation_provenance=provenance)
     if initial is not None and local_config:
         env.initialize_design(initial)
     client = ChatClient(chat_cfg, key, args.run / "api") if chat_cfg else None
@@ -120,6 +142,18 @@ def main() -> None:
                "api_total_tokens": client.total_tokens if client else 0,
                "api_usage_missing_calls": client.usage_missing_calls if client else 0}
     write_json(args.run / "summary.json", summary)
+    if args.design_review:
+        evidence=env.observe().design_evidence
+        if evidence:
+            selected=env.layouts[env.layout_id]
+            write_json(args.run/'selected_layout.json',selected.model_dump())
+            write_json(args.run/'selected_design.json',evidence['design'])
+        write_json(args.run/'design_result.json',{'status':env.status,'engineering_review':'PENDING',
+            'implemented_checks_passed':env.observe().current_best_feasible,
+            'last_agent_review':decision.review.model_dump() if decision.review else None,
+            'pending_trial_not_adopted':env.pending_modification is not None,
+            'stop_reason':'task_step_limit' if env.status=='STEP_LIMIT' else env.status,
+            'evidence_coverage':evidence.get('coverage')})
     print(json.dumps({k: summary[k] for k in ("status", "purpose", "policy", "api_calls", "api_total_tokens")}, ensure_ascii=False))
 
 

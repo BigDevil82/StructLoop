@@ -102,6 +102,38 @@ token 为服务返回值；缺失 usage 单列，不能据此推定费用为零�
 普通单元测试使用 stub；显式 FuseGNN 集成测试使用真实权重但合成 FEA，标记 `mock`。
 真正工程证据只来自 `fidelity=full` 的 OpenSees 记录。基本流程测试仅验证调用与决策路径，不证明工程可行或策略优越。
 
+## 2026-11-02：自主设计审查模式
+
+`agent_cli`增加`--design-review`，要求`--policy llm --enable-local-adjustment --initial-design <设计>`。
+沿用现有`--layout --rooms --spec --run --case-id --purpose --seed --budget-fea --max-steps`。
+当前仍先调用生成入口得到布局与房间图，再进入审查；不要求人工编辑两次决策之间的数据。
+默认住宅平面使用`python -m struct_agent.cli generate --seed 42 --run <新目录>`生成。
+
+- 实际请求包含全部平面构件、房间多边形/可布置区间、构件邻接房间、设计条件和截面、全局检查、所有物理构件的控制受剪及失败/未检查楼层。不是仅传路径；`api/call_*.json`保留请求正文。
+- 目前是坐标和结构化平面输入，没有向学校LLM发送图片；房间用途标签缺失，不能声称已判断全部建筑使用要求。
+- `Decision.review`包含一句诊断、原因假设、涉及构件、效果评议及未解决事项。`Decision.modification`为绑定源分析/布局的类型化指令，目前仅实现`move_wall_tip`；后续增加其他操作时扩充类型，不允许任意源数据修改。
+- `PROPOSE_MODIFICATION`指定墙、相连梁、端点及带符号墙长变化量（m，整毫米），编译后调用已有建筑/连接审查；非法建议返回原因且不调用FEA。
+- 合法建议真实试算，当前方案保持不动。下一轮Agent收到修改前后验算、全部试算构件检查及改变的几何，再选择`ACCEPT_MODIFICATION`或`REJECT_MODIFICATION`。
+- 采纳还要求无新增全局失败、失败计数上升、构件—楼层失败及几何审查问题，且总违反量不恶化。允许增加材料成本；程序不按成本评分替代Agent采纳判断。新布局不复用旧CASINO会话。
+- 原方案合理时允许直接`FINALIZE`；无法解决时报告未解决问题并`REQUEST_HUMAN_REVIEW`。工程审核始终`PENDING`，试算采纳不等于工程批准。
+- 本模式使用任务总FEA预算与步骤上限，不应用旧候选步长、候选数或每种动作试算次数。审查输出上限为8192 token、单次请求超时60秒，实际配置写入manifest；网关失败保留原方案，不伪造Agent结论。
+- 输出`selected_layout.json`、`selected_design.json`、`design_result.json`及原始事件；求解失败或步骤用尽时同样保留状态与未采纳试算。只支持同进程运行，不是磁盘恢复。
+
+## 当前交互：专业查询与来源调查
+
+当前设计审查交互已调整为全局摘要与只读专业查询，替代上节一次性发送完整平面和验算数组的方式。
+`get_design_overview(evidence)`输出全局条件、数量、指标与有限异常入口；
+`inspect_member(evidence, member_id, provenance=...)`计算轴线几何、端点连接、墙实体轴线覆盖、邻接房间、验算与生成来源；
+`inspect_region(evidence, bounds_m, offset=0, limit=12)`按全局XY米制矩形分页返回构件和异常。
+Agent以`QUERY_DESIGN`加`query`指令主动调用，结果及来源绑定写入`queries/query_*.json`，实际正文进入后续请求；查询不调用FEA。
+`source=current/trial`明确区分保留方案和最近试算，采纳新布局后清除旧查询上下文，原始查询审计仍保留。
+
+调查运行添加`--investigation-only --generation-run <生成目录>`：前者由状态机禁止结构修改，后者读取保存的房间图与`ratios.npy`，回放生成各阶段，只有最终布局完全匹配才允许引用来源。
+本轮先调查`beam_199`的56mm轴线段，不继续试调墙端。`physical_span_m`不是已核实净跨；墙覆盖的是梁轴线，不能据此直接删除梁或批准建模修改。
+短构件前处理的共线梁链与FEA支承跨度可能不同，工具分别提供二者，避免把FE分段或支承轴线距离当作独立物理梁与真实洞口。
+
+2026-11-03已按用户要求撤回昂贵的刚域/净跨实现，恢复原有分析模型。生成入口新增确定性墙端交接补齐：已知原始门窗时，核对不超过180mm的唯一共线墙端与正交墙端，延墙并移除中间短梁，拒绝开口邻近、复杂连接或建筑边界不匹配。`junction_preprocessing.json`与来源回放记录原几何、新几何及mask差异；这项例外仅属于前处理，不放宽Agent局部修改审查。旧房间图缺少原始门窗数据时不执行该新规则。住宅真实验证仅补齐beam_199所在56mm间隙；剩余梁超限仍保留，详见进度文档。
+
 ## 尚未完成的研究验收
 
 - 新图正式工程条件及规范口径尚待工程师确定；现有条件仅获准基本流程测试。

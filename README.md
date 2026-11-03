@@ -1,6 +1,6 @@
 # StructLoop
 
-住宅剪力墙布置、固定布置参数优化及结构分析的最小可复用工具。
+住宅结构设计Agent：复用布置生成、参数优化与真实结构分析，逐步实现自主审查、具体修改和反馈决策。
 规划见 [docs/PLAN.md](docs/PLAN.md)；真实决策循环见 [docs/phase4_agent.md](docs/phase4_agent.md)。
 
 本项目从只读上游提取运行所需模块，不迁移训练、论文实验或 CAD 交互工程。
@@ -58,6 +58,7 @@ uv pip install --python .venv/Scripts/python.exe -e .
 当前 `symmetry_mode=none`，未迁入旧案例入口的 `union` 对称化后处理；这不是已审批结构方案。
 
 目录必须是新的。保存 `manifest.json`、`room_graph.json`、`ratios.npy` 和 `layout.json`。
+另存`junction_preprocessing.json`：原始门窗已核对时，允许将不超过180mm的唯一共线墙端间隙补齐到正交墙端；保留现有节点，记录被移除梁段、延墙及局部mask差异。附近200mm内存在原始门窗、连接有歧义或门窗数据未知时不执行这项补齐；这不是Agent修改权限或通用规范限值。
 已有房间图可直接调用 `RCGNNAdapter.generate()`；输入由 `schemas/graph.py` 校验，
 公共几何单位为 m、原生特征长度单位为 mm。单一条件只生成一个确定性候选。
 
@@ -69,7 +70,7 @@ uv pip install --python .venv/Scripts/python.exe -e .
 
 `reference_spec.json` **仅为检查移入代码时使用的示例**，显式列出了旧入口的 28 层、2.9m 层高、
 120mm 板厚及材料/地震参数。正式项目条件、荷载与规范版本仍需工程师确认。
-上述命令采用获准用于诊断的12层条件，仍仅展示接口用法；当前布局含极短物理墙肢，会在真实优化前置检查处阻断。
+上述命令采用获准用于诊断的12层条件，仍仅展示接口用法；每次生成后查看`geometry_review.json`，存在未处理的极短物理墙肢时会在真实优化前置检查处阻断。
 建模统一采用[最终配置](docs/final_model.md)，软件差异排查已结束；后续按建模前检查与工程校核要求推进。
 也可提供符合公共 Schema 的人工修改方案。
 `--rooms` 必须对应该建筑，CASINO 每次从实际墙线重新编码布局特征，禁止套用另一布置缓存。
@@ -153,6 +154,8 @@ Agent入口增加`--enable-local-adjustment`后，规则/LLM可用`ADJUST_LOCAL_
 
 ## 当前边界
 
+2026-11-02起当前重点是自主设计审查闭环。`agent_cli --design-review`先提供全局摘要，由Agent通过`get_design_overview`、`inspect_member`和`inspect_region`按需调查。当前使用`--investigation-only`禁止修改，先核实短梁的几何、连接及生成/建模来源；用法及边界见[Phase 4说明](docs/phase4_agent.md)。墙端调整仅为已有操作之一，策略对比、DWG、多软件和UI后置。
+
 - 原工程 `axis_engine` 是 CAD/规则布置模块；真正的 RC-GNN 位于 `Png2Dxf/src/shearwall_pred`。
   本次没有把 CAD 插件及整套骨架提取工程搬进来。原生 DWG/任意图层解析未实现。
 - 暂时沿用上游固定层高/板厚/分区材料口径；不支持的输入直接拒绝。
@@ -171,7 +174,7 @@ Agent入口增加`--enable-local-adjustment`后，规则/LLM可用`ADJUST_LOCAL_
 
 ## Git 与本地数据
 
-本地仓库使用 `main` 分支。每次任务完成并验证后检查暂存内容并提交，在提交说明中记录验证；不自动推送远端。
+本地仓库使用 `main` 分支。任务通过测试后保留工作区变更供用户审阅，未经明确授权不自动提交或推送；以当前AGENTS.md为准。
 源码、测试、配置、合成 fixture 与数据哈希受版本管理；`.venv`、真实 DXF/DWG、权重、缓存、日志、
 `outputs/` 和密钥文件被忽略。真实案例需保留本地副本或从配置中记录的来源恢复，再校验 SHA256。
 当前布局位于 `outputs/current/residential_001/`，设计位于 `outputs/current/design_12_story/`；

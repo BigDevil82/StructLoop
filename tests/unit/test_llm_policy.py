@@ -40,6 +40,29 @@ def test_valid_llm_and_exact_replay(tmp_path: Path, state: OptimizationState) ->
         ReplayPolicy(tmp_path / "decisions").choose(state.model_copy(update={"stagnation_steps": 3}))
 
 
+def test_design_review_sends_actual_evidence_and_requires_review(tmp_path: Path) -> None:
+    from tests.unit.test_optimization_env import local_env
+    env=local_env(tmp_path/'env',design_review=True)
+    state=env.observe();requests=[]
+    def transport(url,headers,payload,timeout):
+        requests.append(payload)
+        visible=json.loads(payload['messages'][1]['content'])
+        assert 'layout' not in visible['design_evidence'] and 'member_checks' not in visible['design_evidence']
+        assert visible['design_evidence']['query_tools']['inspect_member']
+        assert visible['design_evidence']['raw_response']['max_beam_shear_ratio']==.196
+        decision={'action':'FINALIZE','reason':'No modification needed in this synthetic test',
+            'evidence_refs':list(state.evidence_refs),'target_layout_id':None,'modification':None,
+            'review':{'diagnosis':'Test checks passed','cause_hypothesis':'No known problem',
+                'affected_member_ids':[],'assessment':'Keep the evaluated design','unresolved':['Test only']}}
+        if len(requests)==1:decision.pop('review')
+        return {'choices':[{'message':{'content':json.dumps(decision)}}]}
+    client=ChatClient(ChatConfig(),SecretStr('test-only'),tmp_path/'api',transport=transport)
+    decision=LLMPolicy(client,tmp_path/'decisions').choose(state)
+    assert len(requests)==2 and decision.review.diagnosis=='Test checks passed'
+    assert 'requires diagnosis' in requests[-1]['messages'][-1]['content']
+    assert ReplayPolicy(tmp_path/'decisions').choose(state)==decision
+
+
 @pytest.mark.parametrize("bad", ["not JSON", '{"action":"SHELL","command":"anything"}',
     '{"action":"SWITCH_LAYOUT","reason":"invalid target","evidence_refs":[],"target_layout_id":"invented"}'])
 def test_invalid_outputs_fail_closed(tmp_path: Path, state: OptimizationState, bad: str) -> None:

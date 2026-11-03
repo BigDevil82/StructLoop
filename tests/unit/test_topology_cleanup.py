@@ -2,8 +2,8 @@ import pytest
 from shapely.geometry import LineString
 
 from struct_agent.adapters.geometry import layout_from_legacy
-from struct_agent.adapters.rcgnn import layout_from_prediction, preprocess_short_members
-from struct_agent.schemas import LayoutCandidate, RoomGraph
+from struct_agent.adapters.rcgnn import close_wall_junction_gaps, layout_from_prediction, preprocess_short_members, trace_layout_generation
+from struct_agent.schemas import LayoutCandidate, Member, RoomGraph
 from struct_agent._vendor.data_engine.postprocess.fem_builder import FEMTopologyBuilder
 from struct_agent._vendor.data_engine.postprocess.topology_cleanup import clean_segments
 
@@ -115,3 +115,74 @@ def test_merged_primary_and_secondary_beams_require_review() -> None:
         m.model_copy(update={'role': 'secondary'}) if m.start == (1.1,0.) else m for m in layout.members)})
     with pytest.raises(ValueError, match='Merged beam roles need review'):
         preprocess_short_members(layout)
+
+
+def junction_case(rooms: RoomGraph, gap_m: float = .056) -> tuple[LayoutCandidate, RoomGraph]:
+    layout = LayoutCandidate(layout_id='synthetic_junction', source='unit_test', length_unit='m',
+        coordinate_system='global_xy', slabs=rooms.room_polygons, members=(
+            Member(member_id='wall', start=(0.,4.), end=(1.,4.), role='wall'),
+            Member(member_id='support', start=(1.+gap_m,3.), end=(1.+gap_m,4.), role='wall'),
+            Member(member_id='gap', start=(1.,4.), end=(1.+gap_m,4.), role='primary'),
+            Member(member_id='next_beam', start=(1.+gap_m,4.), end=(4.,4.), role='secondary')))
+    return layout, rooms.model_copy(update={'opening_polygons': ()})
+
+
+def test_wall_junction_closure_retains_support_and_all_other_members(rooms: RoomGraph) -> None:
+    layout, rooms = junction_case(rooms)
+    result, events = close_wall_junction_gaps(layout, rooms)
+    assert result.members[0].end == (1.056,4.)
+    assert result.members[1:] == (layout.members[1], layout.members[3])
+    assert result.slabs == layout.slabs and result.layout_id == layout.layout_id
+    assert events[0]['removed_beam_id'] == 'gap' and events[0]['support_wall_id'] == 'support'
+    assert events[0]['mask_exceptions'] == []
+    assert close_wall_junction_gaps(result, rooms) == (result, [])
+    # Reversing both source segment directions preserves the same connection.
+    reverse = layout.model_copy(update={'members': tuple(
+        m.model_copy(update={'start': m.end, 'end': m.start}) for m in layout.members)})
+    reversed_result, _ = close_wall_junction_gaps(reverse, rooms)
+    assert member_geometry(reversed_result) == member_geometry(result)
+
+
+@pytest.mark.parametrize('reason', ['unknown_openings', 'opening', 'near_opening', 'large_gap',
+    'branch', 'interior_crossing', 'support_interior', 'beam_support'])
+def test_wall_junction_closure_rejects_unverified_or_ambiguous_cases(rooms: RoomGraph, reason: str) -> None:
+    layout, rooms = junction_case(rooms, .181 if reason == 'large_gap' else .056)
+    if reason == 'unknown_openings':
+        rooms = rooms.model_copy(update={'opening_polygons': None})
+    elif reason in ('opening', 'near_opening'):
+        top = 4.05 if reason == 'opening' else 3.9
+        rooms = rooms.model_copy(update={'opening_polygons': (((1.01,3.8),(1.05,3.8),(1.05,top),(1.01,top)),)})
+    elif reason in ('branch', 'interior_crossing'):
+        x = 1. if reason == 'branch' else 1.028
+        layout = layout.model_copy(update={'members': layout.members + (
+            Member(member_id='branch', start=(x,3.), end=(x,4.5), role='primary'),)})
+    elif reason in ('support_interior', 'beam_support'):
+        support = layout.members[1].model_copy(update={'end': (1.056,5.)} if reason == 'support_interior'
+                                              else {'role': 'primary'})
+        layout = layout.model_copy(update={'members': (layout.members[0], support) + layout.members[2:]})
+    assert close_wall_junction_gaps(layout, rooms) == (layout, [])
+
+
+def test_wall_junction_closure_records_local_mask_exception(rooms: RoomGraph) -> None:
+    layout, rooms = junction_case(rooms)
+    rooms = rooms.model_copy(update={'masks': (((),)*8,)})
+    _, events = close_wall_junction_gaps(layout, rooms)
+    assert events[0]['mask_exceptions'][0]['room_index'] == 0
+    assert events[0]['mask_exceptions'][0]['outside_mask_axis_m'] == pytest.approx(.056)
+    wrong = rooms.model_copy(update={'room_polygons': (((10.,0.),(14.,0.),(14.,4.),(10.,4.),(10.,0.)),)})
+    with pytest.raises(ValueError, match='does not match'):
+        close_wall_junction_gaps(layout, wrong)
+
+
+def test_opening_schema_and_generation_replay(rooms: RoomGraph) -> None:
+    import numpy as np
+    assert rooms.opening_polygons is None
+    for bad in ((((0.,0.),(1.,0.)),), (((0.,0.),(1.,1.),(0.,1.),(1.,0.)),)):
+        with pytest.raises(ValueError, match='polygon'):
+            RoomGraph.model_validate({**rooms.model_dump(), 'opening_polygons': bad})
+    rooms = rooms.model_copy(update={'opening_polygons': ()})
+    ratios = np.full((1,16), .4)
+    layout = layout_from_prediction(rooms, ratios, layout_id='synthetic_known_openings')
+    trace = trace_layout_generation(rooms, ratios, layout)
+    assert trace['verified'] and trace['original_openings_available']
+    assert 'before_wall_junction_closure' in trace['stages']

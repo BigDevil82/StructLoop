@@ -51,6 +51,170 @@ def load_members(path: Path, *, expected_fidelity: Literal['full','mock']='full'
     return tuple(MemberDiagnostic.model_validate_json(json.dumps(row)) for row in payload["members"])
 
 
+def design_review_evidence(layout: LayoutCandidate, rooms: RoomGraph, design: DesignCandidate,
+        spec: ProjectSpec, *, evaluation_id: str, raw: dict[str, Any],
+        directory: Path, fidelity: Literal['full','mock']) -> dict[str, Any]:
+    """Supply actual plan and checked results, not paths. XY m, N, Pa.
+
+    Every physical member is represented; story failures are never top-k filtered.
+    The governing shear row is supplemented with all failing/unchecked stories.
+    """
+    import hashlib
+    from shapely.geometry import LineString, Polygon
+    from struct_agent.services.model_review import review_geometry
+    from struct_agent.adapters.fea import native_topology
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import beam_spans
+    members=load_members(directory/'members.json',expected_fidelity=fidelity)
+    checks=json.loads((directory/'checks.json').read_text(encoding='utf-8'))
+    groups: dict[str,list[MemberDiagnostic]]={}
+    for member in members:
+        groups.setdefault(member.member_id,[]).append(member)
+    rows=[]
+    for member_id,items in groups.items():
+        worst=max(items,key=lambda m:m.utilization)
+        rows.append({'member_id':member_id,'source_member_ids':worst.source_member_ids,
+            'role':worst.role,'start_m':worst.start_m,'end_m':worst.end_m,
+            'width_m':worst.width_m,'depth_m':worst.depth_m,'concrete_grade':worst.concrete_grade,
+            'governing_shear':{'story':worst.story,'utilization':worst.utilization,
+                'design_shear_n':worst.shear_n,'control_combo':worst.control_combo,
+                'combined_fe_shear_n':worst.combo_shear_n[worst.control_combo],
+                'physical_span_m':worst.physical_span_m,'coupling':worst.coupling},
+            'checked_stories':sorted({m.story for m in items}),
+            'problems':[{'story':m.story,'shear_passed':m.shear_passed,
+                'reinforcement_passed':m.reinforcement_passed,'messages':sorted(set(m.reinforcement_messages))}
+                for m in items if not m.shear_passed or m.reinforcement_passed is not True]})
+    polygons=[Polygon(p) for p in rooms.room_polygons]
+    topology=native_topology(layout)
+    spans=[{'source_member_ids':[layout.members[i].member_id for i in s.source_ids],
+        'start_m':(s.start.x,s.start.y),'end_m':(s.end.x,s.end.y),'axis_span_m':s.length,'coupling':s.coupling}
+        for s in beam_spans(topology.beams,topology.walls)]
+    plan=layout.model_dump(mode='json')
+    for member in plan['members']:
+        line=LineString([member['start'],member['end']])
+        member['adjacent_room_indices']=[i for i,p in enumerate(polygons) if line.intersection(p.boundary.buffer(.002)).length>.002]
+    return {'evaluation_id':evaluation_id,'fidelity':fidelity,
+        'layout_sha256':hashlib.sha256(layout.model_dump_json().encode()).hexdigest(),
+        'units':{'length':'m','force':'N','stress':'Pa','coordinates':'global_xy'},
+        'layout':plan,'design':design.model_dump(mode='json'),'conditions':spec.model_dump(mode='json'),
+        'rooms':{'polygons':rooms.room_polygons,'allowed_half_edge_intervals':rooms.masks,
+            'adjacency_edges':rooms.edge_index,
+            'semantics':'Room use labels unavailable. Masks are normalized intervals on 8 ordered half-edges; exclusions include openings. No visual image was supplied.'},
+        'raw_response':raw,'global_checks':checks['overall'],'direction_checks':checks['directions'],
+        'geometry_review':review_geometry(layout,design=design).model_dump(),
+        'member_checks':rows,'analysis_beam_spans':spans,
+        'coverage':{'member_story_rows':len(members),'physical_members':len(rows),
+            'aggregation':'Governing shear per physical member plus every failed or unchecked story; full plan has every source segment.',
+            'engineering_scope':'Existing implemented checks and continuous reinforcement design; not complete detailing or engineering release.'}}
+
+
+def get_design_overview(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Small global summary; no full plan, room polygons or story-check arrays."""
+    from shapely.geometry import LineString
+    plan=evidence['layout'];checks=evidence['member_checks']
+    xs=[p[0] for m in plan['members'] for p in (m['start'],m['end'])]
+    ys=[p[1] for m in plan['members'] for p in (m['start'],m['end'])]
+    failed=[m for m in checks if m['problems']]
+    short=sorted(plan['members'],key=lambda m:LineString([m['start'],m['end']]).length)[:5]
+    return {k:evidence[k] for k in ('evaluation_id','layout_sha256','fidelity','units','design','conditions','raw_response','coverage')} | {
+        'plan_summary':{'bounds_m':[min(xs),min(ys),max(xs),max(ys)],
+            'source_member_counts':dict(Counter(m['role'] for m in plan['members'])),
+            'room_count':len(evidence['rooms']['polygons'])},
+        'attention_members':[{'member_id':m['member_id'],'source_member_ids':m['source_member_ids'],
+            'governing_shear':m['governing_shear'],'failed_story_count':len(m['problems'])}
+            for m in sorted(failed,key=lambda m:-m['governing_shear']['utilization'])[:8]],
+        'shortest_axis_segments':[{'member_id':m['member_id'],'role':m['role'],
+            'axis_length_m':LineString([m['start'],m['end']]).length} for m in short],
+        'geometry_issue_counts':dict(Counter(i['code'] for i in evidence['geometry_review']['issues'])),
+        'query_tools':{'get_design_overview':{},'inspect_member':{'member_id':'exact source or physical member ID'},
+            'inspect_region':{'bounds_m':'[xmin,ymin,xmax,ymax], global XY metres','offset':0,'limit':12}},
+        'interpretation':{'physical_span_m':'Existing support-axis span, NOT verified face-to-face clear span.',
+            'beam_grouping':'Beam diagnostic IDs may be FE subdivisions of one support span; inspect_member returns exact analysis-span source IDs.',
+            'capabilities':'Connected-wall compound section checks exist. Independent column stability/detailing is incomplete. Geometry length/thickness flags are screening, not proof that compound checks were omitted.',
+            'architecture':'Room use labels unavailable; interval masks alone do not establish construction intent.'}}
+
+
+def inspect_member(evidence: dict[str, Any], member_id: str, *, provenance: dict[str, Any] | None=None) -> dict[str, Any]:
+    """Deterministic axes, contacts, room adjacency and wall-footprint coverage.
+
+    Plan lengths m, global XY. Footprint coverage of a beam AXIS is a geometric
+    warning, not a 3D joint design or permission to retype/delete the member.
+    """
+    from shapely.geometry import LineString, Point
+    from shapely.ops import unary_union
+    plan=evidence['layout']['members'];by_id={m['member_id']:m for m in plan}
+    diagnostics=[m for m in evidence['member_checks'] if m['member_id']==member_id or member_id in m['source_member_ids']]
+    ids=(member_id,) if member_id in by_id else tuple(s for m in diagnostics for s in m['source_member_ids'])
+    if not ids:raise ValueError('Unknown member ID')
+    selected=[by_id[i] for i in ids];axis=unary_union([LineString([m['start'],m['end']]) for m in selected])
+    contacts=[]
+    for m in selected:
+        for endpoint in ('start','end'):
+            p=Point(m[endpoint])
+            neighbours=[{'member_id':n['member_id'],'role':n['role'],'start':n['start'],'end':n['end'],
+                'contact':'endpoint' if min(Point(n[k]).distance(p) for k in ('start','end'))<=1e-6 else 'interior'}
+                for n in plan if n['member_id'] not in ids and LineString([n['start'],n['end']]).distance(p)<=1e-6]
+            contacts.append({'member_id':m['member_id'],'endpoint':endpoint,'point_m':m[endpoint],'connected_members':neighbours})
+    coverage=[]
+    if any(m['role']!='wall' for m in selected):
+        for key in ('tw_bot','tw_mid','tw_top'):
+            thickness=float(evidence['design']['values'][key]);overlaps=[]
+            for wall in plan:
+                if wall['role']!='wall':continue
+                footprint=LineString([wall['start'],wall['end']]).buffer(thickness/2,cap_style=2)
+                covered=axis.intersection(footprint).length
+                if covered>1e-8:overlaps.append({'member_id':wall['member_id'],'covered_axis_m':covered,
+                    'footprint':footprint})
+            exposed=axis.difference(unary_union([w['footprint'] for w in overlaps])).length
+            coverage.append({'wall_thickness_parameter':key,'thickness_m':thickness,
+                'wall_covered_axis_m':axis.length-exposed,'exposed_axis_m':exposed,
+                'walls':[{'member_id':w['member_id'],'covered_axis_m':w['covered_axis_m']} for w in overlaps]})
+    stages={};chains=[]
+    def overlaps_axis(row: dict[str, Any]) -> bool:
+        # mm->m conversions can differ by 1e-13 m; exact line intersection
+        # would silently lose true provenance. A crossing point is not overlap.
+        line=LineString([row['start'],row['end']])
+        return line.intersection(axis.buffer(1e-6,cap_style=2)).length>1e-5
+    if provenance is not None:
+        if provenance['layout_sha256']!=evidence['layout_sha256']:raise ValueError('Stale generation provenance')
+        for name,rows in provenance['stages'].items():
+            stages[name]=[r for r in rows if overlaps_axis(r)]
+        chains=[c for c in provenance['preprocessing_beam_chains']
+            if any(overlaps_axis(m) for m in c['members'])]
+    room_ids=sorted({i for m in selected for i in m['adjacent_room_indices']})
+    return {'evaluation_id':evidence['evaluation_id'],'layout_sha256':evidence['layout_sha256'],
+        'requested_member_id':member_id,'members':selected,'axis_length_m':axis.length,
+        'endpoint_connections':contacts,'wall_footprint_axis_coverage':coverage,
+        'adjacent_rooms':[{'room_index':i,'polygon':evidence['rooms']['polygons'][i],
+            'allowed_half_edge_intervals':evidence['rooms']['allowed_half_edge_intervals'][i]} for i in room_ids],
+        'checks':diagnostics,'analysis_spans':[s for s in evidence['analysis_beam_spans'] if set(ids).intersection(s['source_member_ids'])],
+        'generation_provenance':{'available':provenance is not None,'stages':stages,
+            'preprocessing_beam_chains':chains,
+            'chain_rule':provenance['preprocessing_chain_rule'] if provenance is not None else 'Unknown'},
+        'model_representation':'Source axes passed to native_topology unchanged; full-stiffness elasticBeamColumn joins source endpoints. Existing physical_span_m is support-axis distance, not a wall-face opening.',
+        'design_shear_rule':'For seismic coupling beams the existing code takes max(abs(combined FE shear), 1.2*sum(abs(end moments))/support-axis span + gravity_bound). Very small axis spans can amplify design shear; design shear is not raw FE shear.',
+        'anomalies':{'beam_axis_inside_wall_footprint':any(c['exposed_axis_m']<1e-7 for c in coverage),
+            'axis_below_100mm':axis.length<.1},
+        'limits':'Wall footprints use finite strip polygons, without end extension. Axis coverage does not establish full beam-volume overlap or construction intent. Resolve modelling/joint semantics before structural edits.'}
+
+
+def inspect_region(evidence: dict[str, Any], bounds_m: tuple[float,float,float,float], *,
+        offset: int=0, limit: int=12) -> dict[str, Any]:
+    """Page deterministic intersecting axes; bounds global XY m, no distance guess."""
+    from shapely.geometry import LineString, Polygon, box
+    xmin,ymin,xmax,ymax=bounds_m
+    if xmin>=xmax or ymin>=ymax or not all(math.isfinite(x) for x in bounds_m):raise ValueError('Invalid region bounds')
+    if not 1<=limit<=32 or offset<0:raise ValueError('Region limit must be 1..32 and offset nonnegative')
+    region=box(*bounds_m)
+    rows=[m for m in evidence['layout']['members'] if LineString([m['start'],m['end']]).intersects(region)]
+    selected=rows[offset:offset+limit];ids={m['member_id'] for m in selected}
+    return {'evaluation_id':evidence['evaluation_id'],'layout_sha256':evidence['layout_sha256'],
+        'bounds_m':bounds_m,'total_members':len(rows),'offset':offset,'next_offset':offset+limit if offset+limit<len(rows) else None,
+        'members':selected,'checks':[m for m in evidence['member_checks'] if ids.intersection(m['source_member_ids'])],
+        'intersecting_room_indices':[i for i,p in enumerate(evidence['rooms']['polygons']) if Polygon(p).intersects(region)],
+        'geometry_issues':[i for i in evidence['geometry_review']['issues'] if ids.intersection(i['source_member_ids'])],
+        'truncation':'Only the requested member page is returned; use next_offset for remaining members.'}
+
+
 def evaluate_local_layout_candidates(service: 'AnalysisService', layout: 'LayoutCandidate',
         design: 'DesignCandidate', spec: 'ProjectSpec', rooms: 'RoomGraph',
         members: tuple[MemberDiagnostic, ...], *, steps_m: tuple[float,...]=(.1,.2),

@@ -118,6 +118,8 @@ class ChatClient:
                      "User-Agent": "StructLoop/0.1"}, payload, self.config.timeout_s)
                 content = response["choices"][0]["message"]["content"]
                 if not isinstance(content, str):
+                    audit['response_metadata']={'content_type':type(content).__name__,
+                        'finish_reason':response['choices'][0].get('finish_reason'),'usage':response.get('usage')}
                     raise GatewayError("Gateway message content is not text")
                 usage = response.get("usage", {})
                 tokens = usage.get("total_tokens") if isinstance(usage, dict) else None

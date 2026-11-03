@@ -8,12 +8,54 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 import hashlib
+import json
 import math
 
 from struct_agent._vendor.shearwall_optimization.core.contracts import EvaluationResult, VariableSpec
 from struct_agent.schemas import DesignCandidate, LayoutCandidate, RoomGraph, Member
 from struct_agent.schemas.diagnostics import MemberDiagnostic
 from struct_agent.schemas.layout import WallTipMove, LocalLayoutProposal, LocalLayoutSearch
+from struct_agent.schemas.state import DesignModification
+
+
+def apply_design_modification(layout: LayoutCandidate, rooms: RoomGraph, design: DesignCandidate,
+        instruction: DesignModification, *, protected_member_ids: frozenset[str]=frozenset()) -> LayoutCandidate:
+    """Compile an Agent's signed wall-length change; coordinates global XY m.
+
+    This executes no analysis and changes neither sections nor architectural data.
+    """
+    from struct_agent.services.model_review import review_local_layout_change
+    by_id={m.member_id:m for m in layout.members}
+    if design.layout_id!=layout.layout_id:
+        raise ValueError('Design/layout mismatch')
+    if instruction.source_layout_sha256!=hashlib.sha256(layout.model_dump_json().encode()).hexdigest():
+        raise ValueError('Stale source layout')
+    ids={instruction.target_member_id,instruction.connected_member_id}
+    if ids-set(by_id) or ids&protected_member_ids:
+        raise ValueError('Unknown or protected target member')
+    wall,beam=by_id[instruction.target_member_id],by_id[instruction.connected_member_id]
+    if wall.role!='wall' or beam.role=='wall':
+        raise ValueError('A wall and its connected beam are required')
+    joint=getattr(wall,instruction.endpoint)
+    if joint not in (beam.start,beam.end):
+        raise ValueError('Selected endpoint is not shared by the wall and beam')
+    root=wall.end if instruction.endpoint=='start' else wall.start
+    length=math.dist(root,joint)
+    moved=tuple(round(joint[i]+instruction.delta_length_m*(joint[i]-root[i])/length,6) for i in range(2))
+    changed=[]
+    for member in layout.members:
+        data=member.model_dump()
+        if member.member_id in ids:
+            data.update(start=moved if member.start==joint else member.start,
+                        end=moved if member.end==joint else member.end)
+        changed.append(Member.model_validate(data))
+    digest=hashlib.sha256(json.dumps([m.model_dump() for m in changed],sort_keys=True).encode()).hexdigest()[:12]
+    candidate=LayoutCandidate.model_validate({**layout.model_dump(),'layout_id':f'{layout.layout_id}_agent_{digest}',
+        'source':'agent_design_modification','members':tuple(changed)})
+    issues=review_local_layout_change(layout,candidate,rooms,design=design)
+    if issues:
+        raise ValueError(', '.join(issues))
+    return candidate
 
 
 def ordered_domain(variable: VariableSpec) -> list[Any]:
