@@ -6,7 +6,7 @@ import json
 import math
 import traceback
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from struct_agent.adapters.casino_session import CasinoSession
 from struct_agent.adapters.casino import CasinoProblem
@@ -19,7 +19,7 @@ from struct_agent.schemas.agent import (OptimizationState, validate_decision, Lo
 from struct_agent.schemas.layout import LocalLayoutProposal
 from struct_agent.schemas.state import Action, Decision
 from struct_agent.services.analysis import AnalysisService, AnalysisFailed
-from struct_agent.services.diagnostics import (load_members, design_review_evidence,
+from struct_agent.services.diagnostics import (load_members, design_review_evidence, compare_responses, member_summary,
     get_design_overview, inspect_member, inspect_region)
 from struct_agent.services.model_review import review_geometry, review_local_layout_change
 
@@ -482,3 +482,187 @@ class OptimizationEnvironment:
                 'local_adjustment_trials':[o.model_dump() for o in self.local_outcomes],
                 "execution_error": self.execution_error.model_dump() if self.execution_error else None,
                 "engineering_review": "PENDING"}
+
+
+def run_feedback_design_task(layout: LayoutCandidate, rooms: RoomGraph, spec: ProjectSpec,
+        initial_design: DesignCandidate, evaluator: AnalysisService, *, directory: Path,
+        seed: int, local_config: LocalAdjustmentConfig | None = None) -> dict[str, Any]:
+    """Search actual component feedback; XY/dimensions m, forces N, stresses Pa.
+
+    Alternate parameter and legal geometry trials on three retained search states.
+    Trial states are not delivered designs. Only full checked feasibility ends
+    the search, followed by uncached verification within the SAME FEA budget.
+    Already-feasible input ends after its initial full analysis. No surrogate,
+    hardcoded member IDs, model changes or engineering release is involved.
+    """
+    from dataclasses import asdict
+    from time import perf_counter
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    from struct_agent.adapters.fea import native_params
+    initial_design.validate_against(spec)
+    if initial_design.layout_id != layout.layout_id or evaluator.records:
+        raise ValueError('Matching initial layout and a fresh evaluator are required')
+    if unary_union([Polygon(p) for p in rooms.room_polygons]).hausdorff_distance(
+            unary_union([Polygon(p) for p in layout.slabs])) > .002:
+        raise ValueError('Room graph does not match input layout')
+    started = perf_counter()
+    (directory/'candidates').mkdir()
+    (directory/'events').mkdir()
+    seen: set[str] = set()
+    pool: list[dict[str, Any]] = []
+    status = 'MODEL_REVIEW_REQUIRED' if review_geometry(layout).requires_model_repair else 'SEARCHING'
+    selected = None
+    verification = None
+    events = []
+
+    def key(plan: LayoutCandidate, values: dict[str, Any]) -> str:
+        geometry = {'members': [m.model_dump() for m in plan.members], 'slabs': plan.slabs}
+        return hashlib.sha256(json.dumps([geometry, values], sort_keys=True).encode()).hexdigest()
+
+    def evaluate(plan: LayoutCandidate, values: dict[str, Any], family: str,
+                 parent: dict[str, Any] | None) -> dict[str, Any] | None:
+        nonlocal status
+        trial_key = key(plan, values)
+        seen.add(trial_key)
+        index = len(events)+1
+        path = directory/f'candidates/layout_{index:03d}.json'
+        write_json(path, plan.model_dump())
+        problem = CasinoProblem(plan, spec, evaluator, layout_path=path, seed=seed)
+        decision = {k: round(float(v)*1000) if k != 'conc_bot' else v for k, v in values.items()}
+        event: dict[str, Any] = {'family': family, 'layout_path': str(path), 'values': values,
+            'parent_evaluation': parent['record'].evaluation_id if parent else None}
+        proposed = DesignCandidate(design_id=trial_key, layout_id=plan.layout_id,
+            condition_id=spec.condition_id, values=values)
+        proposed.validate_against(spec)
+        preflight = review_geometry(plan, design=proposed)
+        new_preflight = {(i.code, i.source_member_ids) for i in preflight.issues}-parent['issues'] if parent else set()
+        if preflight.requires_model_repair or new_preflight:
+            event.update(retained_for_search=False, rejected_before_fea=True,
+                new_geometry_issues=sorted(new_preflight))
+            events.append(event)
+            write_json(directory/f'events/trial_{index:03d}.json', event)
+            return None
+        try:
+            result = problem.evaluate(decision)
+        except AnalysisFailed as exc:
+            status = 'ANALYSIS_FAILED'
+            event.update(analysis=exc.record.model_dump(), retained_for_search=False)
+            state = None
+        else:
+            actual = problem.results[-1][0]
+            record = evaluator.records[-1]
+            members = load_members(evaluator.solver.diagnostics_directory/record.evaluation_id/'members.json',
+                                   expected_fidelity=record.fidelity)
+            review = review_geometry(plan, design=actual)
+            issues = {(i.code, i.source_member_ids) for i in review.issues}
+            wall_failures = {(m.source_member_ids, m.story) for m in members
+                if m.role == 'wall' and (not m.shear_passed or m.reinforcement_passed is not True)}
+            new_issues = issues-parent['issues'] if parent else set()
+            new_wall_failures = wall_failures-parent['wall_failures'] if parent else set()
+            eligible = not review.requires_model_repair and not new_issues and not new_wall_failures
+            checked = all(m.shear_passed and m.reinforcement_passed is True for m in members)
+            if result.feasible and not checked:
+                status = 'VALIDATION_FAILED'
+                eligible = False
+            state = {'layout': plan, 'design': actual, 'result': result, 'record': record,
+                'members': members, 'issues': issues, 'wall_failures': wall_failures} if eligible else None
+            event.update(analysis_path=str(evaluator.directory/f'{record.evaluation_id}.json'),
+                feasible=result.feasible, retained_for_search=eligible,
+                new_geometry_issues=sorted(new_issues), new_wall_failure_slots=sorted(new_wall_failures),
+                material_cost=result.objectives['material_cost'], violation=result.objectives['violation_score'])
+        events.append(event)
+        write_json(directory/f'events/trial_{index:03d}.json', event)
+        print(f'feedback trial={index} family={family} FEA={len(evaluator.records)}/{evaluator.budget}; retained={state is not None}', flush=True)
+        return state
+
+    if status == 'SEARCHING':
+        initial = evaluate(layout, dict(initial_design.values), 'initial', None)
+        if initial:
+            pool.append(initial)
+            if initial['result'].feasible:
+                selected, status = initial, 'ALREADY_FEASIBLE'
+    turn = 0
+    while status == 'SEARCHING' and len(evaluator.records) < evaluator.budget-1:
+        proposal = None
+        for family in (('parameters', 'geometry') if turn % 2 == 0 else ('geometry', 'parameters')):
+            for parent in sorted(pool, key=lambda p: SurrogateCandidateEvaluator.rank_key(p['result']))[:3]:
+                plan, design = parent['layout'], parent['design']
+                if family == 'parameters':
+                    problem = CasinoProblem(plan, spec, evaluator, layout_path=directory/'candidates', seed=seed)
+                    x = {k: round(float(v)*1000) if k != 'conc_bot' else v for k, v in design.values.items()}
+                    candidates = [(plan, {k: float(v)/1000 if k != 'conc_bot' else v for k, v in row.items()})
+                        for row in problem.feedback_candidates(x, parent['result'])]
+                    active = {k for k, v in parent['result'].metrics['normalized_violations'].items() if v > 0}
+                    controlling = {m.role for m in parent['members'] if m.role != 'wall' and m.utilization > 1}
+                    def priority(candidate: tuple[LayoutCandidate, dict[str, Any]]) -> int:
+                        values = candidate[1]
+                        changed = {k for k in values if values[k] != design.values[k]}
+                        heights = {'hb_main' if role == 'primary' else 'hb_sec' for role in controlling}
+                        if not any('wall' in k for k in active) and len(changed) == 1 and changed <= heights:
+                            name = next(iter(changed))
+                            if values[name] < design.values[name]:
+                                return 0
+                        return 1 if changed == {'conc_bot'} else 2
+                    candidates.sort(key=priority)
+                elif local_config and sum(e['family'] == 'geometry' for e in events) < local_config.max_trials:
+                    search = local_layout_candidates(plan, rooms, design, parent['members'],
+                        steps_m=local_config.steps_m, target_utilization=local_config.target_utilization,
+                        max_candidates=32, protected_member_ids=frozenset(local_config.protected_member_ids))
+                    candidates = [(p.layout, dict(design.values)) for p in search.proposals
+                        if key(p.layout, dict(design.values)) not in seen][:local_config.max_candidates]
+                else:
+                    candidates = []
+                for candidate, values in candidates:
+                    if key(candidate, values) not in seen:
+                        proposal = candidate, values, family, parent
+                        break
+                if proposal:
+                    break
+            if proposal:
+                break
+        if not proposal:
+            status = 'NO_ADMISSIBLE_CANDIDATES'
+            break
+        candidate, values, family, parent = proposal
+        trial = evaluate(candidate, values, family, parent)
+        turn += 1
+        if trial:
+            pool.append(trial)
+            pool = sorted(pool, key=lambda p: SurrogateCandidateEvaluator.rank_key(p['result']))[:3]
+            if trial['result'].feasible:
+                selected = trial
+                repeated = evaluator.evaluate(candidate, trial['design'], spec, force_reanalysis=True)
+                verification = {'evaluation_id': repeated.evaluation_id, 'status': repeated.status,
+                    'feasible': repeated.feasible, 'force_reanalysis': True}
+                parity = compare_responses(repeated.raw, trial['record'].raw) if repeated.status == 'SUCCESS' else {}
+                verification['response_parity_passed'] = bool(parity) and all(r['passed'] for r in parity.values())
+                checked = False
+                if repeated.status == 'SUCCESS':
+                    repeated_members = load_members(evaluator.solver.diagnostics_directory/repeated.evaluation_id/'members.json',
+                        expected_fidelity=repeated.fidelity)
+                    checked = all(m.shear_passed and m.reinforcement_passed is True for m in repeated_members)
+                status = 'FEASIBLE' if repeated.feasible and checked and verification['response_parity_passed'] else 'VERIFICATION_FAILED'
+    if status == 'SEARCHING':
+        status = 'BUDGET_EXHAUSTED_NO_FEASIBLE'
+    best = selected or min(pool, key=lambda p: SurrogateCandidateEvaluator.rank_key(p['result']), default=None)
+    success = status in ('FEASIBLE', 'ALREADY_FEASIBLE')
+    summary = {'status': status, 'implemented_checks_passed': success, 'engineering_review': 'PENDING',
+        'fea_attempts': len(evaluator.records), 'fea_budget': evaluator.budget, 'seed': seed,
+        'elapsed_s': perf_counter()-started, 'verification': verification,
+        'best_observed_feasible': bool(best and best['result'].feasible),
+        'unresolved': [] if success else ['No verified feasible design delivered; see actual checks, trials or solver error.'],
+        'trial_count': len(events),
+        'remaining_violations': {k: v for k, v in best['result'].metrics['normalized_violations'].items() if v > 0} if best else {},
+        'selected_evaluation_id': best['record'].evaluation_id if best else None,
+        'solver_failures': sum(r.status != 'SUCCESS' for r in evaluator.records)}
+    if best:
+        write_json(directory/'selected_layout.json', best['layout'].model_dump())
+        write_json(directory/'selected_design.json', best['design'].model_dump())
+        write_json(directory/'parameter_configuration.json', {'design': best['design'].model_dump(),
+            'project_spec': spec.model_dump(), 'native_parameters_mm': asdict(native_params(best['design'], spec)),
+            'layout_path': 'selected_layout.json', 'implemented_checks_passed': success,
+            'engineering_review': 'PENDING', 'member_checks': member_summary(best['members']),
+            'raw_response': best['record'].raw, 'geometry_review': review_geometry(best['layout'], design=best['design']).model_dump()})
+    write_json(directory/'summary.json', summary)
+    return summary

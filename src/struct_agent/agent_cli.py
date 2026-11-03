@@ -15,7 +15,7 @@ from struct_agent.cli import load_assets
 from struct_agent.io.artifacts import create_run, write_json
 from struct_agent.schemas import DesignCandidate, LayoutCandidate, ProjectSpec, RoomGraph
 from struct_agent.services.analysis import AnalysisService
-from struct_agent.workflows.optimization_env import OptimizationEnvironment
+from struct_agent.workflows.optimization_env import OptimizationEnvironment, run_feedback_design_task
 from struct_agent.workflows.layout_approval import LayoutApproval
 from struct_agent.schemas.agent import LocalAdjustmentConfig
 
@@ -28,7 +28,7 @@ def main() -> None:
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--case-id", required=True)
     parser.add_argument("--purpose", choices=("smoke_only", "research"), required=True)
-    parser.add_argument("--policy", choices=("fixed", "rules", "llm"), required=True)
+    parser.add_argument("--policy", choices=("fixed", "rules", "llm", "feedback"), required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--initial-design", type=Path, help="Evaluate this design first, then iterate from real feedback")
     parser.add_argument("--budget-fea", type=int, required=True)
@@ -52,6 +52,8 @@ def main() -> None:
     parser.add_argument('--local-max-candidates',type=int,default=4)
     parser.add_argument('--protect-member',action='append',default=[])
     args = parser.parse_args()
+    if args.policy == 'feedback' and (not args.initial_design or args.use_surrogate or args.design_review):
+        parser.error('--policy feedback requires --initial-design and direct FEA, without --design-review')
     if args.design_review and (args.policy!='llm' or not args.enable_local_adjustment or not args.initial_design):
         parser.error('--design-review requires --policy llm, --enable-local-adjustment and --initial-design')
     if (args.investigation_only or args.generation_run) and not args.design_review:
@@ -114,8 +116,15 @@ def main() -> None:
     if provenance:write_json(args.run/'generation_provenance.json',provenance)
     start = time.monotonic()
     evaluator = AnalysisService(OpenSeesAdapter(log_directory=args.run / "solver_logs",
-                                diagnostics_directory=args.run/'diagnostics' if local_config else None),
+                                diagnostics_directory=args.run/'diagnostics' if local_config or args.policy == 'feedback' else None),
                                 budget=args.budget_fea, directory=args.run / "analyses")
+    if args.policy == 'feedback':
+        if len(layouts) != 1:
+            parser.error('--policy feedback requires one initial layout; legal edits are generated internally')
+        summary = run_feedback_design_task(layouts[0], rooms, spec, initial, evaluator,
+            directory=args.run, seed=args.seed, local_config=local_config)
+        print(json.dumps(summary, ensure_ascii=False))
+        return
     def factory(layout: LayoutCandidate, directory: Path) -> CasinoSession:
         return CasinoSession(layout, rooms, spec, evaluator, cfg, directory=directory)
     env = OptimizationEnvironment(args.case_id, layouts, evaluator, factory, args.run,

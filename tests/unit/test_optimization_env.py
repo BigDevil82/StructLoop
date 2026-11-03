@@ -398,3 +398,132 @@ def test_generation_provenance_replay_binds_the_whole_layout() -> None:
     bad=bad.model_copy(update={'members':(member,)+bad.members[1:]})
     with pytest.raises(ValueError,match='differs'):
         trace_layout_generation(rooms,ratios,bad)
+
+
+def feedback_fixture(tmp_path: Path, mode: str, budget: int = 8) -> tuple:
+    """Synthetic response families validate control flow, never engineering."""
+    from dataclasses import fields
+    from tests.unit.test_search_feedback import local_case
+    from struct_agent.schemas import ProjectSpec, AnalysisRecord
+    from struct_agent.io.artifacts import write_json
+    from struct_agent.services.analysis import AnalysisService
+    from struct_agent._vendor.shearwall_modeling.parametric.types import ParametricAnalysisResult
+    layout, rooms, design, diagnostic = local_case()
+    spec = ProjectSpec.model_validate_json(Path('configs/reference_spec.json').read_text(encoding='utf-8'))
+    spec = spec.model_copy(update={'stories': 3})
+    design = design.model_copy(update={'condition_id': spec.condition_id,
+        'values': {v.name: v.values[0] for v in spec.design_variables}})
+    class Solver:
+        fidelity = 'mock'
+        analysis_signature = 'synthetic_feedback_only'
+        diagnostics_directory = tmp_path/'diagnostics'
+        def __init__(self) -> None:
+            self.seen: set[str] = set()
+        def evaluate(self, candidate, parameters, conditions, *, evaluation_id):
+            if mode == 'solver_error':
+                raise ArithmeticError('Synthetic analysis failure')
+            token = json.dumps(parameters.values, sort_keys=True)
+            repeat = token in self.seen
+            self.seen.add(token)
+            grade = parameters.values['conc_bot']
+            passed = mode == 'already' or grade != 'C30'
+            if mode == 'no_solution':
+                passed = False
+            if mode == 'geometry_wall_failure':
+                passed = grade not in ('C30', 'C35')
+            wall_failure = mode == 'geometry_wall_failure' and candidate.members != layout.members
+            if wall_failure or (mode == 'verification_error' and repeat):
+                passed = False
+            ratio = .15 if passed else .24 if grade == 'C30' else .22
+            raw = {f.name: True if f.type is bool else 0 if f.type is int else 1. if f.type is float else ''
+                   for f in fields(ParametricAnalysisResult)}
+            raw.update(feasible=passed, design_passed=passed, design_failed_beam_count=0 if passed else 1,
+                design_failed_wall_count=int(wall_failure), material_concrete_kg=100000., material_steel_kg=1000.,
+                torsion_ratio=1.2, period_ratio=.8, max_drift_ratio=.0005, max_wall_axial_ratio=.2,
+                max_wall_axial_limit=.5, max_wall_shear_ratio=.1, max_wall_shear_limit=.2,
+                max_beam_shear_ratio=ratio, max_beam_shear_limit=.2, beam_shear_passed=passed)
+            original = diagnostic(1)
+            beam = candidate.members[1]
+            member = original.model_copy(update={'start_m': beam.start, 'end_m': beam.end,
+                'length_m': math.dist(beam.start, beam.end), 'shear_ratio': ratio,
+                'shear_n': ratio*original.denominator_n, 'shear_passed': ratio <= .2,
+                'reinforcement_passed': passed, 'combo_shear_n': {'test': ratio*original.denominator_n},
+                'combo_design_shear_n': {'test': ratio*original.denominator_n}})
+            rows = [member.model_dump()]
+            if wall_failure:
+                wall = candidate.members[0]
+                rows.append(member.model_copy(update={'member_id': wall.member_id, 'source_member_ids': (wall.member_id,),
+                    'role': 'wall', 'start_m': wall.start, 'end_m': wall.end}).model_dump())
+            path = self.diagnostics_directory/evaluation_id
+            path.mkdir(parents=True)
+            write_json(path/'members.json', {'fidelity': 'mock', 'units': {'length': 'm', 'force': 'N', 'stress': 'Pa'}, 'members': rows})
+            return AnalysisRecord(evaluation_id=evaluation_id, layout_id=candidate.layout_id,
+                design_id=parameters.design_id, condition_id=conditions.condition_id, fidelity='mock',
+                status='SUCCESS', solver='synthetic_only', solver_version='1', elapsed_s=0., feasible=passed,
+                raw=raw, error=None)
+    import math
+    service = AnalysisService(Solver(), budget=budget, directory=tmp_path/'analyses')
+    return layout, rooms, spec, design, service
+
+
+def test_feedback_task_stops_on_already_feasible_and_forced_reanalysis_uses_budget(tmp_path: Path) -> None:
+    from struct_agent.workflows.optimization_env import run_feedback_design_task
+    layout, rooms, spec, design, service = feedback_fixture(tmp_path, 'already')
+    result = run_feedback_design_task(layout, rooms, spec, design, service, directory=tmp_path, seed=42)
+    assert result['status'] == 'ALREADY_FEASIBLE' and result['fea_attempts'] == 1
+    assert (tmp_path/'parameter_configuration.json').is_file()
+    first = service.evaluate(layout, design, spec)
+    assert len(service.records) == 1
+    again = service.evaluate(layout, design, spec, force_reanalysis=True)
+    assert len(service.records) == 2 and first.input_hash == again.input_hash
+    assert first.evaluation_id != again.evaluation_id
+
+
+@pytest.mark.parametrize('mode,status', [('grade', 'FEASIBLE'), ('no_solution', 'BUDGET_EXHAUSTED_NO_FEASIBLE'),
+    ('solver_error', 'ANALYSIS_FAILED'), ('verification_error', 'VERIFICATION_FAILED')])
+def test_feedback_task_outputs_honest_result_and_shares_final_verification_budget(tmp_path: Path, mode: str, status: str) -> None:
+    from struct_agent.workflows.optimization_env import run_feedback_design_task
+    layout, rooms, spec, design, service = feedback_fixture(tmp_path, mode, budget=4)
+    result = run_feedback_design_task(layout, rooms, spec, design, service, directory=tmp_path, seed=42)
+    assert result['status'] == status and result['fea_attempts'] <= 4
+    assert result['implemented_checks_passed'] == (status == 'FEASIBLE')
+    assert result['engineering_review'] == 'PENDING'
+    if status in ('FEASIBLE', 'VERIFICATION_FAILED'):
+        assert result['verification']['force_reanalysis'] and result['fea_attempts'] == 3
+
+
+def test_feedback_task_rejects_new_wall_failure_and_keeps_parameter_search_available(tmp_path: Path) -> None:
+    from struct_agent.workflows.optimization_env import run_feedback_design_task
+    from struct_agent.schemas.agent import LocalAdjustmentConfig
+    layout, rooms, spec, design, service = feedback_fixture(tmp_path, 'geometry_wall_failure', budget=8)
+    result = run_feedback_design_task(layout, rooms, spec, design, service, directory=tmp_path, seed=42,
+        local_config=LocalAdjustmentConfig(steps_m=(.1,), max_trials=1))
+    assert result['status'] == 'FEASIBLE'
+    events = [json.loads(p.read_text()) for p in sorted((tmp_path/'events').glob('trial_*.json'))]
+    moves = [e for e in events if e['family'] == 'geometry']
+    assert len(moves) == 1 and moves[0]['new_wall_failure_slots'] and not moves[0]['retained_for_search']
+    selected = json.loads((tmp_path/'selected_layout.json').read_text())
+    assert selected == layout.model_dump(mode='json')
+
+
+def test_feedback_preflight_blocks_new_geometry_issue_before_fea(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from struct_agent.workflows import optimization_env as module
+    from struct_agent.schemas.agent import LocalAdjustmentConfig
+    from struct_agent.services.model_review import GeometryIssue
+    layout, rooms, spec, design, service = feedback_fixture(tmp_path, 'geometry_wall_failure', budget=8)
+    original = module.review_geometry
+    def review(plan, **kwargs):
+        result = original(plan, **kwargs)
+        if plan.source == 'member_feedback_wall_tip_move':
+            issue = GeometryIssue(code='COLUMN_OR_COMPOSITE_DESIGN_REQUIRED',
+                source_member_ids=('wl',), length_m=.9, ratio=3.)
+            return result.model_copy(update={'issues': result.issues+(issue,)})
+        return result
+    monkeypatch.setattr(module, 'review_geometry', review)
+    result = module.run_feedback_design_task(layout, rooms, spec, design, service,
+        directory=tmp_path, seed=42, local_config=LocalAdjustmentConfig(steps_m=(.1,), max_trials=1))
+    assert result['status'] == 'FEASIBLE' and result['fea_attempts'] == 4
+    events = [json.loads(p.read_text()) for p in (tmp_path/'events').glob('trial_*.json')]
+    blocked = [e for e in events if e['family'] == 'geometry']
+    assert len(blocked) == 1 and blocked[0]['rejected_before_fea']
+    assert 'analysis_path' not in blocked[0]

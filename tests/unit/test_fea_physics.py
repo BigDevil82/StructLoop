@@ -244,6 +244,44 @@ def test_sparse_eigen_solves_generalized_problem_with_massless_dofs(sparse_eigen
     np.testing.assert_allclose((vectors*sparse_eigen_buffers['m_values'])@vectors.T,np.eye(2),atol=1e-12)
 
 
+def test_sparse_eigen_refines_once_and_keeps_original_equation_thresholds(sparse_eigen_buffers: dict,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    import numpy as np
+    from struct_agent._vendor.shearwall_modeling.analysis import response_spectrum as module
+    values = np.array([1., 2.])
+    vectors = np.eye(30)[:, :2]
+    vectors[2, 0] = 2e-8
+    original_k = sparse_eigen_buffers['k_values'].copy()
+    original_m = sparse_eigen_buffers['m_values'].copy()
+    monkeypatch.setattr(module, 'eigsh', lambda *args, **kwargs: (values, vectors))
+    calls = []
+    factorize = module.splu
+    def counted(matrix):
+        calls.append(matrix)
+        return factorize(matrix)
+    monkeypatch.setattr(module, 'splu', counted)
+    module._solve_sparse_eigen(**sparse_eigen_buffers)
+    assert len(calls) == 1
+    np.testing.assert_array_equal(sparse_eigen_buffers['k_values'], original_k)
+    np.testing.assert_array_equal(sparse_eigen_buffers['m_values'], original_m)
+    np.testing.assert_array_equal(sparse_eigen_buffers['eigenvalues'], values)
+    modes = sparse_eigen_buffers['eigenvectors'].reshape(2, 30)
+    for value, mode in zip(values, modes):
+        force, inertia = original_k*mode, original_m*mode
+        residual = np.linalg.norm(force-value*inertia)/(np.linalg.norm(force)+value*np.linalg.norm(inertia))
+        assert residual < 1e-8
+    np.testing.assert_allclose((modes*original_m)@modes.T, np.eye(2), rtol=0., atol=1e-8)
+
+
+def test_sparse_eigen_passed_modes_do_not_trigger_extra_factorization(sparse_eigen_buffers: dict,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    from struct_agent._vendor.shearwall_modeling.analysis import response_spectrum as module
+    def unexpected(*args, **kwargs):
+        pytest.fail('Passing original eigenvectors must not trigger refinement')
+    monkeypatch.setattr(module, 'splu', unexpected)
+    module._solve_sparse_eigen(**sparse_eigen_buffers)
+
+
 @pytest.mark.parametrize('failure',['nonpositive','nonfinite','residual','orthogonality'])
 def test_sparse_eigen_rejects_invalid_results_before_writing_buffers(sparse_eigen_buffers: dict,
         monkeypatch: pytest.MonkeyPatch,failure: str) -> None:

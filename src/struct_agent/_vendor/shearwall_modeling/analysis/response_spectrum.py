@@ -1,9 +1,10 @@
 import math
+import logging
 from typing import Any
 from types import SimpleNamespace
 import numpy as np
 import scipy.sparse as sp
-from scipy.sparse.linalg import eigsh
+from scipy.sparse.linalg import eigsh, splu
 import openseespy.opensees as ops
 from ..builders.base import AnalysisModelContext
 from .combinations import cqc, srss
@@ -34,6 +35,24 @@ def _solve_sparse_eigen(**buffers: Any) -> None:
     values,vectors=values[order],vectors[:,order]
     if not np.all(np.isfinite(values)) or np.any(values<=1e-12):
         raise ValueError('Invalid/nonpositive eigenvalue; possible mechanism')
+    force, inertia = stiffness@vectors, mass@vectors
+    residuals = np.linalg.norm(force-inertia*values, axis=0)/(np.linalg.norm(force, axis=0)+np.abs(values)*np.linalg.norm(inertia, axis=0))
+    if np.max(residuals) >= 1e-8:
+        # One residual correction on the ORIGINAL equations. Compensated sums
+        # avoid losing small equilibrium residuals to large cancelling products.
+        if np.any(stiffness.diagonal() <= 0):
+            raise ValueError('Nonpositive stiffness diagonal prevents eigen refinement')
+        compact = stiffness.copy()
+        compact.eliminate_zeros()
+        accurate_force = np.column_stack([np.array([
+            math.fsum((compact.data[compact.indptr[i]:compact.indptr[i+1]] *
+                vector[compact.indices[compact.indptr[i]:compact.indptr[i+1]]]).tolist())
+            for i in range(n)]) for vector in vectors.T])
+        scale = 1/np.sqrt(stiffness.diagonal())
+        diagonal = sp.diags(scale)
+        factor = splu((diagonal@stiffness@diagonal).tocsc())
+        vectors -= scale[:,None]*factor.solve(scale[:,None]*(accurate_force-inertia*values))
+        logging.getLogger(__name__).warning('Applied one sparse eigen residual correction; original acceptance thresholds retained')
     for value,vector in zip(values,vectors.T):
         force,inertia=stiffness@vector,mass@vector
         residual=np.linalg.norm(force-value*inertia)/(np.linalg.norm(force)+abs(value)*np.linalg.norm(inertia))

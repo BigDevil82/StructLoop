@@ -88,8 +88,11 @@ def feedback_candidates(x: dict[str, Any], result: EvaluationResult, variables: 
         # greater shear and should not be treated as monotonic capacity repair.
         groups += [("hb_main",), ("hb_sec",)]
         direction = 1
+    moves = [(group, direction) for group in groups]
+    if not result.feasible and any('beam' in k for k in active):
+        moves += [((name,), -1) for name in ('hb_main', 'hb_sec')]
     proposals = []
-    for group in groups:
+    for group, direction in moves:
         candidate = dict(x)
         for name in group:
             values = domains[name]

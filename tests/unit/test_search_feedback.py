@@ -60,6 +60,16 @@ def test_feasible_feedback_seeks_lower_cost_and_excludes_evaluated_designs() -> 
     assert proposed[0] not in p.feedback_candidates(x, result)
 
 
+def test_failed_beam_feedback_includes_shallower_sections_within_domain() -> None:
+    p = problem()
+    x = {v.name: v.domain[-1] for v in p.variables}
+    result = EvaluationResult(1., {}, False, {}, {'normalized_violations': {'beam_shear_ratio': .3}})
+    proposed = p.feedback_candidates(x, result)
+    assert any(c['hb_sec'] < x['hb_sec'] for c in proposed)
+    assert any(c['hb_main'] < x['hb_main'] for c in proposed)
+    assert all(c[v.name] in v.domain for c in proposed for v in p.variables)
+
+
 def test_concrete_cost_recovers_volume_without_density_mismatch() -> None:
     row = dict(conc_bot='C30', tw_bot=200, tw_mid=200, tw_top=200)
     cost = material_cost(concrete_kg=2500., steel_kg=10., row=row, steel_price_per_kg=5.)

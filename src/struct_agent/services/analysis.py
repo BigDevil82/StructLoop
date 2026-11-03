@@ -29,13 +29,14 @@ class AnalysisService:
         self.designs: list[DesignCandidate] = []
         self._cache: dict[str, AnalysisRecord] = {}
 
-    def evaluate(self, layout: LayoutCandidate, design: DesignCandidate, spec: ProjectSpec) -> AnalysisRecord:
+    def evaluate(self, layout: LayoutCandidate, design: DesignCandidate, spec: ProjectSpec, *,
+                 force_reanalysis: bool = False) -> AnalysisRecord:
         design.validate_against(spec)
         if design.layout_id != layout.layout_id:
             raise ValueError("Design/layout mismatch")
         signature = getattr(self.solver, 'analysis_signature', type(self.solver).__qualname__)
         key = hashlib.sha256((signature+layout.model_dump_json()+spec.model_dump_json()+str(sorted(design.values.items()))).encode()).hexdigest()
-        if key in self._cache:
+        if key in self._cache and not force_reanalysis:
             return self._cache[key]
         if len(self.records) >= self.budget:
             raise BudgetExhausted(f"FEA budget {self.budget} exhausted")

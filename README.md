@@ -154,6 +154,15 @@ Agent入口增加`--enable-local-adjustment`后，规则/LLM可用`ADJUST_LOCAL_
 
 ## 当前边界
 
+### 真实反馈驱动的统一任务入口
+
+`agent_cli --policy feedback`接收一份布局、房间图、设计条件和初始参数，直接调用真实FEA，优先取得可行解。
+例如沿用上文入口参数，设置`--policy feedback --initial-design <参数JSON> --budget-fea 16 --enable-local-adjustment --local-max-trials 16`。
+该入口不用代理或LLM服务，按实际超限交替试验参数和合法墙端候选，不硬编码构件ID；几何审查先于FEA，新增墙验算失败的候选不进入后续搜索。
+保留三个有希望的搜索状态；试算状态不等于交付方案。已可行输入只分析一次，找到新可行解后用同一预算强制复算，缓存命中不冒充复算。预算留一次给最终复核，不要求耗尽。
+输出`selected_layout.json`、`selected_design.json`、`parameter_configuration.json`、`events/`和`summary.json`。
+只有`FEASIBLE`或`ALREADY_FEASIBLE`标为通过已实现校核；`BUDGET_EXHAUSTED_NO_FEASIBLE`、`NO_ADMISSIBLE_CANDIDATES`、`ANALYSIS_FAILED`和`VERIFICATION_FAILED`分别说明未解或执行/复核失败。未解时保存的最佳观察参数明确标为未通过，不能作为可行方案交付；这些状态不是工程无解证明，工程审核始终PENDING。
+
 2026-11-02起当前重点是自主设计审查闭环。`agent_cli --design-review`先提供全局摘要，由Agent通过`get_design_overview`、`inspect_member`和`inspect_region`按需调查。当前使用`--investigation-only`禁止修改，先核实短梁的几何、连接及生成/建模来源；用法及边界见[Phase 4说明](docs/phase4_agent.md)。墙端调整仅为已有操作之一，策略对比、DWG、多软件和UI后置。
 
 - 原工程 `axis_engine` 是 CAD/规则布置模块；真正的 RC-GNN 位于 `Png2Dxf/src/shearwall_pred`。
