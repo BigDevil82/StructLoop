@@ -123,7 +123,8 @@ def test_session_construction_failure_is_audited_and_stops_execution(env: Optimi
     assert env.status == "AWAITING_REVIEW"
 
 
-def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4, design_review: bool=False) -> OptimizationEnvironment:
+def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4, design_review: bool=False,
+              allow_parameter_edits: bool=False) -> OptimizationEnvironment:
     """Synthetic responses/diagnostics confined to tests; never physical evidence."""
     from dataclasses import fields,asdict
     from tests.unit.test_search_feedback import local_case
@@ -139,7 +140,8 @@ def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4, design_revi
         fidelity='mock'
         diagnostics_directory=tmp_path/'diagnostics'
         def evaluate(self,candidate,parameters,conditions,*,evaluation_id):
-            assert parameters.values==design.values
+            if not allow_parameter_edits:
+                assert parameters.values==design.values
             if mode=='fail' and evaluation_id=='eval_00002':raise ArithmeticError('synthetic local trial failure')
             initial=evaluation_id=='eval_00001';passed=initial or mode!='reject'
             raw={f.name:True if f.type is bool else 0 if f.type is int else 1. if f.type is float else ''
@@ -155,6 +157,15 @@ def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4, design_revi
                 'shear_ratio':ratio,'shear_n':ratio*original.denominator_n,'shear_passed':True,
                 'reinforcement_passed':True,'combo_shear_n':{'test':ratio*original.denominator_n},
                 'combo_design_shear_n':{'test':ratio*original.denominator_n}})
+            if allow_parameter_edits:
+                from struct_agent._vendor.shearwall_modeling.core.constants import concrete_fc_pa
+                width, depth = float(parameters.values['bb_sec']), float(parameters.values['hb_sec'])
+                fc = concrete_fc_pa(parameters.values['conc_bot'])
+                denominator = fc*width*(depth-.04)
+                member = member.model_copy(update={'width_m':width,'depth_m':depth,'effective_depth_m':depth-.04,
+                    'concrete_grade':parameters.values['conc_bot'],'fc_pa':fc,'denominator_n':denominator,
+                    'shear_n':ratio*denominator,'combo_shear_n':{'test':ratio*denominator},
+                    'combo_design_shear_n':{'test':ratio*denominator}})
             path=self.diagnostics_directory/evaluation_id;path.mkdir(parents=True)
             write_json(path/'members.json',{'fidelity':'mock','units':{'length':'m','force':'N','stress':'Pa'},'members':[member.model_dump()]})
             write_json(path/'checks.json',{'overall':{'passed':passed},'directions':{}})
@@ -233,10 +244,14 @@ def test_local_budget_exhaustion_closes_action_and_respects_trial_limit(tmp_path
 
 
 def review_decision(env: OptimizationEnvironment, action: str, **changes) -> Decision:
-    from struct_agent.schemas.state import DesignReview, DesignModification
+    from struct_agent.schemas.state import DesignReview, DesignModification, DesignQuery
     state=env.observe()
     instruction=None
     if action=='PROPOSE_MODIFICATION':
+        # Synthetic Agent fixture explicitly investigates before suggesting an edit.
+        env.step(Decision(action='QUERY_DESIGN',reason='Inspect affected test member',evidence_refs=state.evidence_refs,
+            query=DesignQuery(tool='inspect_member',member_id='b')))
+        state=env.observe()
         instruction=DesignModification(operation='move_wall_tip',source_evaluation_id=state.design_evidence['evaluation_id'],
             source_layout_sha256=state.design_evidence['layout_sha256'],target_member_id='wl',connected_member_id='b',
             endpoint='end',delta_length_m=-.1,expected_effect='Synthetic test: longer beam span')
@@ -245,6 +260,64 @@ def review_decision(env: OptimizationEnvironment, action: str, **changes) -> Dec
         review=DesignReview(diagnosis='Synthetic short beam review',cause_hypothesis='Test hypothesis only',
             affected_member_ids=('b',),assessment='Compare the actual trial before accepting',unresolved=('Test only',)),
         modification=instruction)
+
+
+def parameter_decision(env: OptimizationEnvironment, **updates) -> Decision:
+    from struct_agent.schemas.state import ParameterModification
+    wall = review_decision(env, 'PROPOSE_MODIFICATION')
+    state = env.observe()
+    return wall.model_copy(update={'modification': ParameterModification(operation='set_design_parameters',
+        source_evaluation_id=state.design_evidence['evaluation_id'],source_layout_sha256=state.design_evidence['layout_sha256'],
+        parameter_updates=updates,expected_effect='Synthetic material or section trial; compare real feedback before adopting')})
+
+
+@pytest.mark.parametrize('accept', [True, False])
+def test_parameter_trial_requires_agent_judgment_and_retains_layout(tmp_path: Path, accept: bool) -> None:
+    env = local_env(tmp_path, design_review=True, allow_parameter_edits=True)
+    layout = env.layouts[env.layout_id]
+    before = env.observe().design_evidence['design']
+    state = env.step(parameter_decision(env, conc_bot='C35'))
+    assert env.layouts[env.layout_id] == layout
+    assert state.design_evidence['design'] == before
+    assert state.modification_feedback['changed_parameters'] == {'conc_bot': {'before':'C30','after':'C35'}}
+    assert state.modification_feedback['after']['design']['values']['conc_bot'] == 'C35'
+    assert 'ACCEPT_MODIFICATION' in state.allowed_actions and len(env.evaluator.records) == 2
+    env.step(review_decision(env, 'ACCEPT_MODIFICATION' if accept else 'REJECT_MODIFICATION'))
+    assert env.observe().design_evidence['design']['values']['conc_bot'] == ('C35' if accept else 'C30')
+    assert env.layouts[env.layout_id] == layout
+    if accept:
+        assert not env.query_results
+        reverted = env.step(parameter_decision(env, conc_bot='C30'))
+        assert reverted.modification_feedback['status'] == 'PARAMETERS_REJECTED'
+        assert reverted.modification_feedback['fea_consumed'] == 0 and reverted.fea_calls_used == 2
+
+
+def test_parameter_domain_noop_duplicates_and_failed_trial_keep_current_design(tmp_path: Path) -> None:
+    env = local_env(tmp_path, design_review=True, allow_parameter_edits=True, mode='reject')
+    for updates in ({'bb_sec': .123}, {'conc_bot':'C30'}):
+        state = env.step(parameter_decision(env, **updates))
+        assert state.modification_feedback['status'] == 'PARAMETERS_REJECTED'
+        assert state.fea_calls_used == 1
+    state = env.step(parameter_decision(env, conc_bot='C35'))
+    assert 'ACCEPT_MODIFICATION' not in state.allowed_actions
+    env.step(review_decision(env, 'REJECT_MODIFICATION'))
+    assert env.observe().design_evidence['design']['values']['conc_bot'] == 'C30'
+    state = env.step(parameter_decision(env, conc_bot='C35'))
+    assert state.modification_feedback['status'] == 'PARAMETERS_REJECTED' and state.fea_calls_used == 2
+
+
+def test_modification_requires_relevant_current_query_not_overview_or_stale_query(tmp_path: Path) -> None:
+    from struct_agent.schemas.agent import validate_decision
+    env = local_env(tmp_path, design_review=True)
+    decision = review_decision(env, 'PROPOSE_MODIFICATION')
+    state = env.observe()
+    assert validate_decision(decision, state) == decision
+    for results in ((), ({**state.design_query_results[0],
+            'result':{**state.design_query_results[0]['result'],'evaluation_id':'stale'}},),
+            ({**state.design_query_results[0],'query':{'tool':'get_design_overview','source':'current'}},)):
+        stale = state.model_copy(update={'design_query_results':results})
+        with pytest.raises(ValueError, match='Inspect an affected'):
+            validate_decision(decision, stale)
 
 
 def test_design_review_receives_actual_plan_and_can_finish_without_modification(tmp_path: Path) -> None:

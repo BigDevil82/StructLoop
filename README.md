@@ -163,7 +163,7 @@ Agent入口增加`--enable-local-adjustment`后，规则/LLM可用`ADJUST_LOCAL_
 输出`selected_layout.json`、`selected_design.json`、`parameter_configuration.json`、`events/`和`summary.json`。
 只有`FEASIBLE`或`ALREADY_FEASIBLE`标为通过已实现校核；`BUDGET_EXHAUSTED_NO_FEASIBLE`、`NO_ADMISSIBLE_CANDIDATES`、`ANALYSIS_FAILED`和`VERIFICATION_FAILED`分别说明未解或执行/复核失败。未解时保存的最佳观察参数明确标为未通过，不能作为可行方案交付；这些状态不是工程无解证明，工程审核始终PENDING。
 
-2026-11-02起当前重点是自主设计审查闭环。`agent_cli --design-review`先提供全局摘要，由Agent通过`get_design_overview`、`inspect_member`和`inspect_region`按需调查。当前使用`--investigation-only`禁止修改，先核实短梁的几何、连接及生成/建模来源；用法及边界见[Phase 4说明](docs/phase4_agent.md)。墙端调整仅为已有操作之一，策略对比、DWG、多软件和UI后置。
+当前重点是自主设计审查闭环。`agent_cli --policy llm --design-review`先提供全局摘要，由Agent通过`get_design_overview`、`inspect_member`和`inspect_region`按需调查，再提出合法墙端或截面/材料参数修改，读取真实FEA反馈并明确采纳或拒绝。`--investigation-only`仅用于可选的只读调查，自主修改运行不传此项；用法及边界见[Phase 4说明](docs/phase4_agent.md)。墙端调整仅为已有操作之一，策略对比、DWG、多软件和UI后置。
 
 - 原工程 `axis_engine` 是 CAD/规则布置模块；真正的 RC-GNN 位于 `Png2Dxf/src/shearwall_pred`。
   本次没有把 CAD 插件及整套骨架提取工程搬进来。原生 DWG/任意图层解析未实现。

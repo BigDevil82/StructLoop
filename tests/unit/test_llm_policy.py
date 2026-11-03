@@ -63,6 +63,68 @@ def test_design_review_sends_actual_evidence_and_requires_review(tmp_path: Path)
     assert ReplayPolicy(tmp_path/'decisions').choose(state)==decision
 
 
+def test_llm_receives_queries_parameter_trial_and_makes_explicit_adoption(tmp_path: Path) -> None:
+    from tests.unit.test_optimization_env import local_env
+    env = local_env(tmp_path/'env', design_review=True, allow_parameter_edits=True)
+    requests = []
+    def transport(url, headers, payload, timeout):
+        visible = json.loads(payload['messages'][1]['content'])
+        requests.append(visible)
+        n = len(requests)
+        review = {'diagnosis':'Synthetic margin review','cause_hypothesis':'Investigate the actual test member',
+            'affected_member_ids':['b'],'assessment':'Use the returned analysis, not an assumed score','unresolved':['Synthetic test only']}
+        decision = {'action':'FINALIZE','reason':'Synthetic decision','evidence_refs':visible['evidence_refs'],
+            'target_layout_id':None,'query':None,'modification':None,'review':review}
+        if n in (1,3):
+            decision.update(action='QUERY_DESIGN', review=None,
+                query={'tool':'inspect_member','member_id':'b','source':'current' if n==1 else 'trial'})
+        elif n==2:
+            actual = visible['design_query_results'][-1]['result']
+            assert actual['members'][0]['member_id']=='b' and actual['endpoint_connections']
+            assert 'set_design_parameters' in payload['messages'][0]['content']
+            decision.update(action='PROPOSE_MODIFICATION', modification={'operation':'set_design_parameters',
+                'source_evaluation_id':visible['design_evidence']['evaluation_id'],
+                'source_layout_sha256':visible['design_evidence']['layout_sha256'],
+                'parameter_updates':{'conc_bot':'C35'},'expected_effect':'Test a shared material update and inspect actual feedback'})
+        elif n==4:
+            feedback = visible['modification_feedback']
+            assert feedback['changed_parameters']=={'conc_bot':{'before':'C30','after':'C35'}}
+            assert visible['design_query_results'][-1]['query']['source']=='trial'
+            assert visible['design_query_results'][-1]['result']['checks'][0]['concrete_grade']=='C35'
+            assert feedback['after']['raw_response']['max_beam_shear_ratio']==.13
+            decision['action']='ACCEPT_MODIFICATION'
+        else:
+            assert visible['design_evidence']['design']['values']['conc_bot']=='C35'
+            assert not visible['design_query_results']
+        return {'choices':[{'message':{'content':json.dumps(decision)}}]}
+    client = ChatClient(ChatConfig(), SecretStr('synthetic-only'), tmp_path/'api', transport=transport)
+    policy = LLMPolicy(client, tmp_path/'decisions')
+    states = []
+    for _ in range(5):
+        state = env.observe()
+        decision = policy.choose(state)
+        states.append((state, decision))
+        env.step(decision)
+    replay = ReplayPolicy(tmp_path/'decisions')
+    assert all(replay.choose(state)==decision for state, decision in states)
+    assert env.status=='COMPLETED' and len(env.evaluator.records)==2 and len(requests)==5
+    assert [p['action_history'][-1] for p in requests[1:]]==[
+        'QUERY_DESIGN','PROPOSE_MODIFICATION','QUERY_DESIGN','ACCEPT_MODIFICATION']
+
+
+def test_nontext_truncated_response_preserves_known_token_usage(tmp_path: Path) -> None:
+    from struct_agent.agents.chat_client import GatewayError
+    response = {'choices':[{'message':{'content':None},'finish_reason':'length'}],
+        'usage':{'prompt_tokens':12,'completion_tokens':18,'total_tokens':30}}
+    client = ChatClient(ChatConfig(), SecretStr('synthetic-only'), tmp_path/'api',
+        transport=lambda *args: response)
+    with pytest.raises(GatewayError,match='not text'):
+        client.complete([{'role':'user','content':'Synthetic request'}])
+    assert client.total_tokens==30 and client.calls==1
+    audit = json.loads((tmp_path/'api/call_00001.json').read_text())
+    assert audit['response_metadata']['usage']['total_tokens']==30
+
+
 @pytest.mark.parametrize("bad", ["not JSON", '{"action":"SHELL","command":"anything"}',
     '{"action":"SWITCH_LAYOUT","reason":"invalid target","evidence_refs":[],"target_layout_id":"invented"}'])
 def test_invalid_outputs_fail_closed(tmp_path: Path, state: OptimizationState, bad: str) -> None:

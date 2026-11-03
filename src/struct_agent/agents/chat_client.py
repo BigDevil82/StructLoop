@@ -21,8 +21,8 @@ class ChatConfig(Contract):
     base_url: str = "https://agi.tongji.edu.cn/v1"
     model: str = "DeepSeek-V4.1-Flash"
     api_key_env: str = "apikey"
-    timeout_s: float = Field(default=45., gt=0., le=60.)
-    max_tokens: int = Field(default=1024, ge=32, le=8192)
+    timeout_s: float = Field(default=45., gt=0., le=240.)
+    max_tokens: int = Field(default=1024, ge=32, le=16384)
     max_attempts: int = Field(default=2, ge=1, le=3)
     temperature: float = Field(default=0., ge=0., le=2.)
     use_system_proxy: bool = False
@@ -116,17 +116,17 @@ class ChatClient:
                 response = self.transport(self.config.base_url.rstrip("/") + "/chat/completions",
                     {"Authorization": "Bearer " + self._key.get_secret_value(), "Content-Type": "application/json",
                      "User-Agent": "StructLoop/0.1"}, payload, self.config.timeout_s)
-                content = response["choices"][0]["message"]["content"]
-                if not isinstance(content, str):
-                    audit['response_metadata']={'content_type':type(content).__name__,
-                        'finish_reason':response['choices'][0].get('finish_reason'),'usage':response.get('usage')}
-                    raise GatewayError("Gateway message content is not text")
                 usage = response.get("usage", {})
                 tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
                 if type(tokens) is int and tokens >= 0:
                     self.total_tokens += tokens
                 else:
                     self.usage_missing_calls += 1
+                content = response["choices"][0]["message"]["content"]
+                if not isinstance(content, str):
+                    audit['response_metadata']={'content_type':type(content).__name__,
+                        'finish_reason':response['choices'][0].get('finish_reason'),'usage':response.get('usage')}
+                    raise GatewayError("Gateway message content is not text")
                 audit["response"] = {"content": content, "usage": usage, "model": response.get("model"),
                     "id": response.get("id"), "finish_reason": response["choices"][0].get("finish_reason")}
             except Exception as exc:

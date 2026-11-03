@@ -103,8 +103,6 @@ def main() -> None:
     chat_cfg = None
     if args.policy == "llm":
         chat_cfg = ChatConfig.model_validate_json(args.llm_config.read_text(encoding="utf-8"))
-        if args.design_review:
-            chat_cfg=chat_cfg.model_copy(update={'max_tokens':8192,'timeout_s':60.})
         key = read_api_key(args.env_file, chat_cfg.api_key_env)
         inputs["llm_config"] = args.llm_config
     create_run(args.run, seed=args.seed, inputs=inputs, config={"casino": cfg.model_dump(mode="json"),

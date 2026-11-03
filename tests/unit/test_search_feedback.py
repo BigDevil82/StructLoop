@@ -70,6 +70,35 @@ def test_failed_beam_feedback_includes_shallower_sections_within_domain() -> Non
     assert all(c[v.name] in v.domain for c in proposed for v in p.variables)
 
 
+def test_parameter_modification_preserves_geometry_and_checks_scope_domains_and_protection() -> None:
+    import hashlib
+    from struct_agent.schemas.state import ParameterModification, Decision
+    from struct_agent.adapters.design_search import apply_parameter_modification
+    layout, _, design, _ = local_case()
+    spec = ProjectSpec.model_validate_json(Path('configs/reference_spec.json').read_text(encoding='utf-8'))
+    spec = spec.model_copy(update={'condition_id':design.condition_id})
+    before = design.model_dump_json(), layout.model_dump_json()
+    instruction = ParameterModification(operation='set_design_parameters',source_evaluation_id='synthetic_eval',
+        source_layout_sha256=hashlib.sha256(layout.model_dump_json().encode()).hexdigest(),
+        parameter_updates={'conc_bot':'C35'},expected_effect='Synthetic trial only')
+    candidate = apply_parameter_modification(layout,design,spec,instruction)
+    assert candidate.values == {**design.values,'conc_bot':'C35'}
+    assert candidate.layout_id == design.layout_id and candidate.condition_id == design.condition_id
+    assert before == (design.model_dump_json(),layout.model_dump_json())
+    parsed = Decision.model_validate_json(Decision(action='PROPOSE_MODIFICATION',reason='test',modification=instruction).model_dump_json())
+    assert parsed.modification == instruction
+    for updates in ({'stories':18.}, {'intensity':9.}, {}):
+        with pytest.raises(ValueError):
+            ParameterModification.model_validate({**instruction.model_dump(),'parameter_updates':updates})
+    for updates in ({'bb_sec':.123}, {'tw_mid':.25}, {'conc_bot':'C30'}):
+        with pytest.raises(ValueError):
+            apply_parameter_modification(layout,design,spec,instruction.model_copy(update={'parameter_updates':updates}))
+    with pytest.raises(ValueError,match='protected'):
+        apply_parameter_modification(layout,design,spec,instruction,protected_member_ids=frozenset({'b'}))
+    with pytest.raises(ValueError,match='Stale source'):
+        apply_parameter_modification(layout,design,spec,instruction.model_copy(update={'source_layout_sha256':'stale'}))
+
+
 def test_concrete_cost_recovers_volume_without_density_mismatch() -> None:
     row = dict(conc_bot='C30', tw_bot=200, tw_mid=200, tw_top=200)
     cost = material_cost(concrete_kg=2500., steel_kg=10., row=row, steel_price_per_kg=5.)

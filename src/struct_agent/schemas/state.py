@@ -1,11 +1,12 @@
 """Shared actions and decisions for the real optimization workflow."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
 from .base import Contract
+from .project import VARIABLE_NAMES
 
 Action = Literal["CONTINUE_OPTIMIZATION", "ADJUST_LOCAL_LAYOUT", "SWITCH_LAYOUT", "REQUEST_HUMAN_REVIEW", "FINALIZE",
                  "PROPOSE_MODIFICATION", "ACCEPT_MODIFICATION", "REJECT_MODIFICATION", "QUERY_DESIGN"]
@@ -39,7 +40,7 @@ class DesignReview(Contract):
 
 
 class DesignModification(Contract):
-    """Typed design operation; currently only wall-tip moves are executable. XY m."""
+    """Wall-tip operation, global XY m; retained for existing callers."""
     operation: Literal['move_wall_tip']
     source_evaluation_id: str
     source_layout_sha256: str
@@ -56,13 +57,28 @@ class DesignModification(Contract):
         return self
 
 
+class ParameterModification(Contract):
+    """Partial updates of existing design variables; lengths m, concrete grade string."""
+    operation: Literal['set_design_parameters']
+    source_evaluation_id: str
+    source_layout_sha256: str
+    parameter_updates: dict[str, float | str] = Field(min_length=1)
+    expected_effect: str = Field(min_length=1)
+
+    @model_validator(mode='after')
+    def variable_names(self) -> ParameterModification:
+        if set(self.parameter_updates)-set(VARIABLE_NAMES):
+            raise ValueError('Only the eight declared design variables can be updated; conditions are fixed')
+        return self
+
+
 class Decision(Contract):
     action: Action
     reason: str = Field(min_length=1)
     evidence_refs: tuple[str, ...] = ()
     target_layout_id: str | None = None
     review: DesignReview | None = None
-    modification: DesignModification | None = None
+    modification: Annotated[DesignModification | ParameterModification, Field(discriminator='operation')] | None = None
     query: DesignQuery | None = None
 
     @model_validator(mode="after")

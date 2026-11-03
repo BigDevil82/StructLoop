@@ -12,10 +12,10 @@ import json
 import math
 
 from struct_agent._vendor.shearwall_optimization.core.contracts import EvaluationResult, VariableSpec
-from struct_agent.schemas import DesignCandidate, LayoutCandidate, RoomGraph, Member
+from struct_agent.schemas import DesignCandidate, LayoutCandidate, ProjectSpec, RoomGraph, Member
 from struct_agent.schemas.diagnostics import MemberDiagnostic
 from struct_agent.schemas.layout import WallTipMove, LocalLayoutProposal, LocalLayoutSearch
-from struct_agent.schemas.state import DesignModification
+from struct_agent.schemas.state import DesignModification, ParameterModification
 
 
 def apply_design_modification(layout: LayoutCandidate, rooms: RoomGraph, design: DesignCandidate,
@@ -55,6 +55,39 @@ def apply_design_modification(layout: LayoutCandidate, rooms: RoomGraph, design:
     issues=review_local_layout_change(layout,candidate,rooms,design=design)
     if issues:
         raise ValueError(', '.join(issues))
+    return candidate
+
+
+def apply_parameter_modification(layout: LayoutCandidate, design: DesignCandidate, spec: ProjectSpec,
+        instruction: ParameterModification, *, protected_member_ids: frozenset[str]=frozenset()) -> DesignCandidate:
+    """Validate partial section/material edits without changing geometry or conditions.
+
+    Public lengths m, whole mm required by the backend. Variables are shared by
+    their role/storey zones; conc_bot currently sets all three concrete zones.
+    """
+    from .fea import native_params
+    if design.layout_id != layout.layout_id:
+        raise ValueError('Design/layout mismatch')
+    if instruction.source_layout_sha256 != hashlib.sha256(layout.model_dump_json().encode()).hexdigest():
+        raise ValueError('Stale source layout')
+    values = {**design.values, **instruction.parameter_updates}
+    changed = {k for k in values if values[k] != design.values[k]}
+    if not changed:
+        raise ValueError('Parameter update does not change the current design')
+    roles = {'conc_bot': {'wall', 'primary', 'secondary'},
+        'tw_bot': {'wall'}, 'tw_mid': {'wall'}, 'tw_top': {'wall'},
+        'hb_main': {'primary'}, 'bb_main': {'primary'},
+        'hb_sec': {'secondary'}, 'bb_sec': {'secondary'}}
+    affected = set().union(*(roles[k] for k in changed))
+    by_id = {m.member_id: m for m in layout.members}
+    if protected_member_ids-set(by_id):
+        raise ValueError('Unknown protected member')
+    if any(by_id[k].role in affected for k in protected_member_ids):
+        raise ValueError('Shared parameter update affects a protected member')
+    digest = hashlib.sha256(json.dumps([layout.layout_id, design.condition_id, values], sort_keys=True).encode()).hexdigest()[:16]
+    candidate = DesignCandidate(design_id=f'agent_parameters_{digest}', layout_id=layout.layout_id,
+        condition_id=design.condition_id, values=values)
+    native_params(candidate, spec)  # Exact domains, condition binding and mm conversion; no FEA.
     return candidate
 
 

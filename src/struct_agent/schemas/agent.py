@@ -143,6 +143,16 @@ def validate_decision(decision: Decision, state: OptimizationState) -> Decision:
             if (decision.modification.source_evaluation_id != evidence['evaluation_id'] or
                     decision.modification.source_layout_sha256 != evidence['layout_sha256']):
                 raise ValueError('Modification must bind the currently reviewed analysis and layout')
+            inspected = set()
+            for query in state.design_query_results:
+                result = query['result']
+                if (query['query']['source'] == 'current'
+                        and query['query']['tool'] in ('inspect_member', 'inspect_region')
+                        and result.get('evaluation_id') == evidence['evaluation_id']
+                        and result.get('layout_sha256') == evidence['layout_sha256']):
+                    inspected.update(m['member_id'] for m in result['members'])
+            if not inspected.intersection(decision.review.affected_member_ids):
+                raise ValueError('Inspect an affected member or region in the current analysis before proposing a modification')
         if decision.action=='FINALIZE' and state.current_best_feasible is not True and not decision.review.unresolved:
             raise ValueError('An unverified or infeasible result must state unresolved issues')
     return decision

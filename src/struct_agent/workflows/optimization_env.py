@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from struct_agent.adapters.casino_session import CasinoSession
 from struct_agent.adapters.casino import CasinoProblem
-from struct_agent.adapters.design_search import local_layout_candidates, apply_design_modification
+from struct_agent.adapters.design_search import local_layout_candidates, apply_design_modification, apply_parameter_modification
 from struct_agent._vendor.shearwall_optimization.surrogate_candidate import SurrogateCandidateEvaluator
 from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import ErrorRecord, LayoutCandidate, DesignCandidate, ProjectSpec, RoomGraph
@@ -286,17 +286,22 @@ class OptimizationEnvironment:
         feedback={'instruction':decision.modification.model_dump(),'proposal_review':decision.review.model_dump(),
             'source_evaluation_id':source.evaluation_id,'adopted':False}
         try:
-            candidate=apply_design_modification(self.layouts[self.layout_id],self.rooms,design,decision.modification,
-                protected_member_ids=frozenset(self.local_config.protected_member_ids))
-            key=self._trial_key(candidate,design)
+            if decision.modification.operation == 'set_design_parameters':
+                candidate = self.layouts[self.layout_id]
+                next_design = apply_parameter_modification(candidate, design, self.spec, decision.modification,
+                    protected_member_ids=frozenset(self.local_config.protected_member_ids))
+            else:
+                candidate=apply_design_modification(self.layouts[self.layout_id],self.rooms,design,decision.modification,
+                    protected_member_ids=frozenset(self.local_config.protected_member_ids))
+                next_design=design.model_copy(update={'layout_id':candidate.layout_id})
+            key=self._trial_key(candidate,next_design)
             if key in self.local_tried:
                 raise ValueError('Geometry and parameters already evaluated; choose a different modification or stop')
         except ValueError as exc:
-            feedback.update(status='GEOMETRY_REJECTED',reason=str(exc),eligible_for_adoption=False,
+            feedback.update(status='PARAMETERS_REJECTED' if decision.modification.operation == 'set_design_parameters' else 'GEOMETRY_REJECTED',reason=str(exc),eligible_for_adoption=False,
                 fea_consumed=0)
         else:
             self.local_tried.add(key)
-            next_design=design.model_copy(update={'layout_id':candidate.layout_id})
             try:
                 actual,result,record=self._evaluate_design(candidate,next_design)
             except AnalysisFailed as exc:
@@ -330,6 +335,8 @@ class OptimizationEnvironment:
                 trial_view={k:after[k] for k in after_keys}
                 trial_view['changed_members']=[b.model_dump() for a,b in zip(self.layouts[self.layout_id].members,candidate.members) if a!=b]
                 trial_view['unchanged_geometry_from_layout_sha256']=before['layout_sha256']
+                feedback['changed_parameters'] = {k: {'before': design.values[k], 'after': actual.values[k]}
+                    for k in actual.values if actual.values[k] != design.values[k]}
                 feedback.update(status='AWAITING_AGENT_ASSESSMENT',eligible_for_adoption=eligible,
                     new_failed_checks=new_failures,new_geometry_issues=new_issues,
                     new_member_failures=new_member_failures,fea_consumed=1,
