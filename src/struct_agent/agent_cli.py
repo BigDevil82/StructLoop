@@ -110,7 +110,8 @@ def main() -> None:
         "purpose": args.purpose, "case_id": args.case_id, "fidelity": "full",
         'local_adjustment':local_config.model_dump() if local_config else None,
         'design_review':args.design_review,'investigation_only':args.investigation_only,
-        'effective_chat_config':chat_cfg.model_dump() if chat_cfg else None})
+        'effective_chat_config':chat_cfg.model_dump() if chat_cfg else None,
+        'llm_protocol':'native_tool_calls_only' if chat_cfg else None})
     if provenance:write_json(args.run/'generation_provenance.json',provenance)
     start = time.monotonic()
     evaluator = AnalysisService(OpenSeesAdapter(log_directory=args.run / "solver_logs",
@@ -156,6 +157,7 @@ def main() -> None:
             write_json(args.run/'selected_layout.json',selected.model_dump())
             write_json(args.run/'selected_design.json',evidence['design'])
         write_json(args.run/'design_result.json',{'status':env.status,'engineering_review':'PENDING',
+            'agent_protocol':'native_tool_calls_only',
             'implemented_checks_passed':env.observe().current_best_feasible,
             'last_agent_review':decision.review.model_dump() if decision.review else None,
             'pending_trial_not_adopted':env.pending_modification is not None,

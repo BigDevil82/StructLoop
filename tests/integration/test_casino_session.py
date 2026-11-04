@@ -188,7 +188,7 @@ def test_matched_three_policy_comparison(case_inputs: tuple, tmp_path: Path) -> 
     import time
     from pydantic import SecretStr
     from struct_agent.agents.chat_client import ChatClient, ChatConfig
-    from struct_agent.agents.policies import FixedPolicy, RulePolicy, LLMPolicy
+    from struct_agent.agents.policies import FixedPolicy, RulePolicy, LLMPolicy, ACTION_TO_TOOL
     from struct_agent.evaluation.compare import comparison
     from struct_agent.schemas.agent import OptimizationState
     from struct_agent.workflows.optimization_env import OptimizationEnvironment
@@ -215,8 +215,13 @@ def test_matched_three_policy_comparison(case_inputs: tuple, tmp_path: Path) -> 
         client = None
         if policy_name == "llm_stub":
             def transport(url: str, headers: dict, payload: dict, timeout: float) -> dict:
-                state = OptimizationState.model_validate_json(payload["messages"][1]["content"])
-                return {"choices": [{"message": {"content": RulePolicy().choose(state).model_dump_json()}}],
+                state = OptimizationState.model_validate_json(payload["messages"][-1]["content"])
+                choice = RulePolicy().choose(state)
+                # Tool-only unresolved runs stop for review rather than imply successful completion.
+                name = 'request_human_review' if choice.action=='FINALIZE' and not state.current_best_feasible else ACTION_TO_TOOL[choice.action]
+                args = {'target_layout_id':choice.target_layout_id} if choice.target_layout_id else {}
+                return {"choices": [{"message": {"content": None,"tool_calls":[{'id':'synthetic_call','type':'function',
+                    'function':{'name':name,'arguments':json.dumps(args)}}]},'finish_reason':'tool_calls'}],
                         "usage": {"total_tokens": 0}, "model": "TEST_STUB_NOT_LIVE"}
             client = ChatClient(ChatConfig(model="TEST_STUB_NOT_LIVE"), SecretStr("test-only-key"), root / "api", transport=transport)
             policy = LLMPolicy(client, root / "decisions")
@@ -230,7 +235,7 @@ def test_matched_three_policy_comparison(case_inputs: tuple, tmp_path: Path) -> 
             if env.status == "WAITING_APPROVAL":
                 env.approve_layout(alternate.layout_id, reviewer="synthetic test approval",
                     expected_sha256=hashlib.sha256(alternate.model_dump_json().encode()).hexdigest())
-        assert env.status == "COMPLETED"
+        assert env.status == ('AWAITING_REVIEW' if policy_name=='llm_stub' else 'COMPLETED')
         write_json(root / "summary.json", {**env.summary(), "elapsed_s": time.monotonic()-start,
             "api_calls": client.calls if client else 0, "api_total_tokens": client.total_tokens if client else 0})
         runs.append(root)

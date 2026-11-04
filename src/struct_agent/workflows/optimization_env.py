@@ -194,7 +194,7 @@ class OptimizationEnvironment:
                 self.visited.add(candidate.layout_id)
                 self.query_results=[]
             self.modification_feedback={**self.modification_feedback,'agent_action':decision.action,
-                'agent_review':decision.review.model_dump(),'adopted':decision.action=='ACCEPT_MODIFICATION',
+                'agent_review':decision.review.model_dump() if decision.review else None,'adopted':decision.action=='ACCEPT_MODIFICATION',
                 'status':'ADOPTED' if decision.action=='ACCEPT_MODIFICATION' else 'REJECTED'}
             self.pending_modification=None
         elif decision.action == "CONTINUE_OPTIMIZATION":
@@ -283,7 +283,7 @@ class OptimizationEnvironment:
         before=self._review_evidence(design)
         self.modification_count+=1
         self.trial_evidence=None
-        feedback={'instruction':decision.modification.model_dump(),'proposal_review':decision.review.model_dump(),
+        feedback={'instruction':decision.modification.model_dump(),'proposal_review':decision.review.model_dump() if decision.review else None,
             'source_evaluation_id':source.evaluation_id,'adopted':False}
         try:
             if decision.modification.operation == 'set_design_parameters':

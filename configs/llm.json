@@ -2,9 +2,10 @@
   "base_url": "https://agi.tongji.edu.cn/v1",
   "model": "DeepSeek-V4.1-Flash",
   "api_key_env": "apikey",
-  "timeout_s": 240.0,
-  "max_tokens": 16384,
+  "timeout_s": 120.0,
+  "max_tokens": 2048,
   "max_attempts": 2,
   "temperature": 0.0,
+  "thinking": "enabled",
   "use_system_proxy": false
 }

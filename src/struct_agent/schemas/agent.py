@@ -119,8 +119,9 @@ def validate_decision(decision: Decision, state: OptimizationState) -> Decision:
     if state.design_review_enabled:
         if decision.action=='QUERY_DESIGN':
             return decision
-        if decision.review is None:
+        if decision.review is None and decision.tool_call_id is None:
             raise ValueError('Design review requires diagnosis, cause hypothesis and assessment')
+        affected = decision.inspected_member_ids if decision.tool_call_id else decision.review.affected_member_ids
         known = {m['member_id'] for m in state.design_evidence.get('layout', {}).get('members', [])}
         known.update(m['member_id'] for m in state.design_evidence.get('member_checks', []))
         known.update(m['member_id'] for m in state.modification_feedback.get('after', {}).get('member_checks', []))
@@ -136,7 +137,7 @@ def validate_decision(decision: Decision, state: OptimizationState) -> Decision:
                 known.add(row['member_id']);known.update(row['source_member_ids'])
             for endpoint in result.get('endpoint_connections',[]):
                 known.update(m['member_id'] for m in endpoint['connected_members'])
-        if set(decision.review.affected_member_ids)-known:
+        if set(affected)-known:
             raise ValueError('Review cites unknown members')
         if decision.modification:
             evidence=state.design_evidence
@@ -151,8 +152,9 @@ def validate_decision(decision: Decision, state: OptimizationState) -> Decision:
                         and result.get('evaluation_id') == evidence['evaluation_id']
                         and result.get('layout_sha256') == evidence['layout_sha256']):
                     inspected.update(m['member_id'] for m in result['members'])
-            if not inspected.intersection(decision.review.affected_member_ids):
+            if not inspected.intersection(affected):
                 raise ValueError('Inspect an affected member or region in the current analysis before proposing a modification')
-        if decision.action=='FINALIZE' and state.current_best_feasible is not True and not decision.review.unresolved:
+        if decision.action=='FINALIZE' and state.current_best_feasible is not True and (
+                decision.tool_call_id or not decision.review.unresolved):
             raise ValueError('An unverified or infeasible result must state unresolved issues')
     return decision

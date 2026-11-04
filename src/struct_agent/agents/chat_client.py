@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import time
 import traceback
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +25,7 @@ class ChatConfig(Contract):
     max_tokens: int = Field(default=1024, ge=32, le=16384)
     max_attempts: int = Field(default=2, ge=1, le=3)
     temperature: float = Field(default=0., ge=0., le=2.)
+    thinking: Literal['enabled','disabled'] = 'enabled'
     use_system_proxy: bool = False
 
     @model_validator(mode="after")
@@ -104,9 +105,13 @@ class ChatClient:
             return [self.redact(v) for v in value]
         return value
 
-    def complete(self, messages: list[dict[str, str]]) -> str:
+    def complete(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> str | dict[str, Any]:
         payload = {"model": self.config.model, "messages": messages, "temperature": self.config.temperature,
                    "max_tokens": self.config.max_tokens, "stream": False}
+        if tools is not None:
+            payload.update(tools=tools, tool_choice='required', parallel_tool_calls=False,
+                           thinking={'type':self.config.thinking},
+                           reasoning_effort='high' if self.config.thinking=='enabled' else 'none')
         for attempt in range(1, self.config.max_attempts + 1):
             self.calls += 1
             started = time.perf_counter()
@@ -122,13 +127,26 @@ class ChatClient:
                     self.total_tokens += tokens
                 else:
                     self.usage_missing_calls += 1
-                content = response["choices"][0]["message"]["content"]
-                if not isinstance(content, str):
+                message = response['choices'][0]['message']
+                content = message.get('content')
+                audit['response'] = {'content':content, 'tool_calls':message.get('tool_calls'),
+                    'usage':usage, 'model':response.get('model'), 'id':response.get('id'),
+                    'finish_reason':response['choices'][0].get('finish_reason')}
+                if tools is not None:
+                    calls = message.get('tool_calls')
+                    if content not in (None, '') or not isinstance(calls, list) or len(calls) != 1:
+                        raise GatewayError('Expected exactly one tool call and no message content')
+                    call = calls[0]
+                    if (call.get('type') != 'function' or not call.get('id')
+                            or call.get('function', {}).get('name') not in {t['function']['name'] for t in tools}
+                            or not isinstance(call.get('function', {}).get('arguments'), str)
+                            or response['choices'][0].get('finish_reason') != 'tool_calls'):
+                        raise GatewayError('Invalid, unavailable or incomplete tool call')
+                    content = call
+                elif not isinstance(content, str):
                     audit['response_metadata']={'content_type':type(content).__name__,
                         'finish_reason':response['choices'][0].get('finish_reason'),'usage':response.get('usage')}
                     raise GatewayError("Gateway message content is not text")
-                audit["response"] = {"content": content, "usage": usage, "model": response.get("model"),
-                    "id": response.get("id"), "finish_reason": response["choices"][0].get("finish_reason")}
             except Exception as exc:
                 status = exc.status if isinstance(exc, GatewayError) else None
                 audit["error"] = {"type": getattr(exc, "error_type", type(exc).__name__), "message": str(exc),

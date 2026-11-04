@@ -48,7 +48,7 @@ class DesignModification(Contract):
     connected_member_id: str
     endpoint: Literal['start', 'end']
     delta_length_m: float = Field(allow_inf_nan=False)
-    expected_effect: str = Field(min_length=1)
+    expected_effect: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode='after')
     def millimetres(self) -> DesignModification:
@@ -63,7 +63,7 @@ class ParameterModification(Contract):
     source_evaluation_id: str
     source_layout_sha256: str
     parameter_updates: dict[str, float | str] = Field(min_length=1)
-    expected_effect: str = Field(min_length=1)
+    expected_effect: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode='after')
     def variable_names(self) -> ParameterModification:
@@ -80,6 +80,8 @@ class Decision(Contract):
     review: DesignReview | None = None
     modification: Annotated[DesignModification | ParameterModification, Field(discriminator='operation')] | None = None
     query: DesignQuery | None = None
+    tool_call_id: str | None = Field(default=None, min_length=1)
+    inspected_member_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def target(self) -> Decision:
