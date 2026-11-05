@@ -404,6 +404,11 @@ def test_agent_queries_geometry_connections_and_paged_region_without_fea(tmp_pat
     assert result['members'][0]['start']==[1.,3.]
     assert result['endpoint_connections'][0]['connected_members'][0]['member_id']=='wl'
     assert result['generation_provenance']['available'] is False
+    assert result['layout_relations']['wall_piers']==[]  # Requested object is a beam.
+    state=query(DesignQuery(tool='inspect_member',member_id='b'))
+    assert 'no new evidence' in state.design_query_results[-1]['result']['error']
+    assert any(r['result'].get('requested_member_id')=='b' for r in state.design_query_results)
+    assert state.fea_calls_used==1
     state=query(DesignQuery(tool='inspect_region',bounds_m=(-1.,-1.,5.,4.),limit=2))
     result=state.design_query_results[-1]['result']
     assert result['total_members']==5 and len(result['members'])==2 and result['next_offset']==2
@@ -418,6 +423,27 @@ def test_agent_queries_geometry_connections_and_paged_region_without_fea(tmp_pat
     assert all((env.directory/r['evidence_ref']).is_file() for r in state.design_query_results)
     with pytest.raises(ValueError,match='not allowed'):
         env.step(review_decision(env,'PROPOSE_MODIFICATION'))
+
+
+def test_trial_comparison_uses_source_coverage_when_physical_group_ids_change(tmp_path: Path) -> None:
+    import copy
+    from struct_agent.services.diagnostics import compare_design_trials
+    env=local_env(tmp_path,design_review=True)
+    evidence=env._review_evidence(env.verified_results[env.layout_id][0][0])
+    before=copy.deepcopy(evidence)
+    row=before['member_checks'][0]
+    row.update(member_id='old_group',source_member_ids=['a','b'],
+        problems=[{'story':1,'shear_passed':False,'reinforcement_passed':True}])
+    before['member_checks']=[row]
+    after=copy.deepcopy(before)
+    after['member_checks']=[dict(row,member_id='new_a',source_member_ids=['a']),
+                            dict(row,member_id='new_b',source_member_ids=['b'])]
+    result=compare_design_trials(before,after,{'a':'a','b':'b'})
+    assert result['failed_source_story_checks_before']==result['failed_source_story_checks_after']==2
+    assert not result['new_source_story_checks'] and not result['resolved_source_story_checks']
+    after['member_checks'][1]['problems']=[]
+    result=compare_design_trials(before,after,{'a':'a','b':'b'})
+    assert result['resolved_source_story_checks']==[('b',1,'shear')]
 
 
 def test_query_trial_is_bound_to_trial_analysis_and_retained_design_stays_current(tmp_path: Path) -> None:

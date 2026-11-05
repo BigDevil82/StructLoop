@@ -90,3 +90,73 @@ def test_local_review_rejects_retyping_slabs_and_wrong_architecture() -> None:
     assert review_local_layout_change(layout,candidate,rooms,design=design)==('member_identity_or_role_changed',)
     rooms=rooms.model_copy(update={'room_polygons':(((10.,0.),(14.,0.),(14.,3.),(10.,3.)),)})
     assert review_local_layout_change(layout,layout,rooms,design=design)==('room_graph_does_not_match_layout',)
+
+
+@pytest.mark.parametrize('branch_length', [.25, 2.])
+def test_generated_stub_repair_distinguishes_small_group_from_real_wall_host(layout, rooms, design, branch_length):
+    import hashlib
+    from struct_agent.schemas import Member
+    from struct_agent.schemas.state import LayoutRepairModification
+    from struct_agent.services.model_review import inspect_layout_relations
+    from struct_agent.adapters.design_search import apply_layout_repair
+    candidate=layout.model_copy(update={'members':(
+        Member(member_id='left_support',start=(0.,0.),end=(0.,3.),role='wall'),
+        Member(member_id='left_beam',start=(0.,3.),end=(1.9,3.),role='secondary'),
+        Member(member_id='stub',start=(1.9,3.),end=(2.1,3.),role='wall'),
+        Member(member_id='right_beam',start=(2.1,3.),end=(4.,3.),role='primary'),
+        Member(member_id='right_support',start=(4.,3.),end=(4.,0.),role='wall'),
+        Member(member_id='stub_branch',start=(2.,3.),end=(2.,3.-branch_length),role='wall'))})
+    design=design.model_copy(update={'layout_id':candidate.layout_id,'values':dict(design.values,tw_bot=.2,tw_mid=.18,tw_top=.16)})
+    rooms=rooms.model_copy(update={'room_polygons':candidate.slabs})
+    instruction=LayoutRepairModification.model_validate_json(json.dumps(dict(operation='repair_generated_layout',source_evaluation_id='test',
+        source_layout_sha256=hashlib.sha256(candidate.model_dump_json().encode()).hexdigest(),
+        repairs=[{'kind':'remove_unsupported_wall_group','member_ids':['stub']},
+                 {'kind':'unify_beam_span','member_ids':['stub'],'beam_role':'primary'}])))
+    facts=inspect_layout_relations(candidate,rooms,design)
+    if branch_length==2.:
+        assert not facts['small_wall_groups']
+        with pytest.raises(ValueError,match='attached long walls'):
+            apply_layout_repair(candidate,rooms,design,instruction)
+    else:
+        assert set(facts['small_wall_groups'][0]['source_member_ids'])=={'stub','stub_branch'}
+        repaired=apply_layout_repair(candidate,rooms,design,instruction)
+        assert [m.member_id for m in repaired.members]==[m.member_id for m in candidate.members]
+        assert all(m.role=='primary' for m in repaired.members if m.member_id in ('left_beam','stub','right_beam'))
+        assert next(m for m in repaired.members if m.member_id=='stub_branch').role=='secondary'
+        with pytest.raises(ValueError,match='protected'):
+            apply_layout_repair(candidate,rooms,design,instruction,protected_member_ids=frozenset({'left_beam'}))
+
+
+def test_opening_repair_preserves_beam_axis_and_refuses_real_branch(layout, rooms, design):
+    import hashlib
+    from struct_agent.schemas import Member
+    from struct_agent.schemas.state import LayoutRepairModification
+    from struct_agent.adapters.design_search import apply_layout_repair
+    from struct_agent.services.model_review import inspect_layout_relations
+    candidate=layout.model_copy(update={'members':(
+        Member(member_id='host',start=(0.,0.),end=(0.,3.),role='wall'),
+        Member(member_id='return',start=(0.,3.),end=(1.1,3.),role='wall'),
+        Member(member_id='beam',start=(1.1,3.),end=(3.,3.),role='secondary'))})
+    rooms=rooms.model_copy(update={'opening_polygons':(((1.,2.9),(2.,2.9),(2.,3.1),(1.,3.1)),)})
+    rooms=rooms.model_copy(update={'room_polygons':candidate.slabs})
+    design=design.model_copy(update={'layout_id':candidate.layout_id})
+    def instruction(l):
+        return LayoutRepairModification.model_validate_json(json.dumps(dict(operation='repair_generated_layout',source_evaluation_id='test',
+            source_layout_sha256=hashlib.sha256(l.model_dump_json().encode()).hexdigest(),
+            repairs=[{'kind':'align_opening_edges','member_ids':['return']}])))
+    repaired=apply_layout_repair(candidate,rooms,design,instruction(candidate))
+    assert repaired.members[1].end==repaired.members[2].start==(.999,3.)
+    assert not inspect_layout_relations(repaired,rooms,design)['opening_conflicts']
+    preview=inspect_layout_relations(candidate,rooms,design)['opening_conflicts'][0]['align_opening_edges_preflight']
+    assert preview['eligible'] and preview['new_joint_m']==(.999,3.)
+    split=candidate.model_copy(update={'members':(candidate.members[0],
+        Member(member_id='long_flange',start=(0.,3.),end=(.942,3.),role='wall'),
+        candidate.members[1].model_copy(update={'start':(.942,3.)}),candidate.members[2])})
+    preview=inspect_layout_relations(split,rooms,design)['opening_conflicts'][0]['align_opening_edges_preflight']
+    assert preview['eligible'] and preview['remaining_source_segment_m']<.18
+    assert preview['remaining_physical_wall_pier_m']==pytest.approx(.999)
+    assert apply_layout_repair(split,rooms,design,instruction(split)).members[2].end==(.999,3.)
+    branch=Member(member_id='fixed_branch',start=(1.1,3.),end=(1.1,1.),role='wall')
+    branched=candidate.model_copy(update={'members':candidate.members+(branch,)})
+    with pytest.raises(ValueError,match='branch/support'):
+        apply_layout_repair(branched,rooms,design,instruction(branched))

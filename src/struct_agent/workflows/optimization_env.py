@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from struct_agent.adapters.casino_session import CasinoSession
 from struct_agent.adapters.casino import CasinoProblem
-from struct_agent.adapters.design_search import local_layout_candidates, apply_design_modification, apply_parameter_modification
+from struct_agent.adapters.design_search import local_layout_candidates, apply_design_modification, apply_parameter_modification, apply_layout_repair
 from struct_agent._vendor.shearwall_optimization.surrogate_candidate import SurrogateCandidateEvaluator
 from struct_agent.io.artifacts import write_json
 from struct_agent.schemas import ErrorRecord, LayoutCandidate, DesignCandidate, ProjectSpec, RoomGraph
@@ -20,7 +20,7 @@ from struct_agent.schemas.layout import LocalLayoutProposal
 from struct_agent.schemas.state import Action, Decision
 from struct_agent.services.analysis import AnalysisService, AnalysisFailed
 from struct_agent.services.diagnostics import (load_members, design_review_evidence, compare_responses, member_summary,
-    get_design_overview, inspect_member, inspect_region)
+    get_design_overview, inspect_member, inspect_region, compare_design_trials)
 from struct_agent.services.model_review import review_geometry, review_local_layout_change
 
 
@@ -57,6 +57,7 @@ class OptimizationEnvironment:
         self.modification_feedback: dict = {}
         self.pending_modification: tuple | None = None
         self.modification_count=0
+        self.design_trial_history: list[dict] = []
         self.investigation_only=investigation_only
         self.generation_provenance=generation_provenance
         self.query_results: list[dict] = []
@@ -77,7 +78,7 @@ class OptimizationEnvironment:
                 'root_layout_sha256':{k:hashlib.sha256(v.model_dump_json().encode()).hexdigest() for k,v in self.layouts.items()},
                 'rooms_sha256':hashlib.sha256(rooms.model_dump_json().encode()).hexdigest(),
                 'spec_sha256':hashlib.sha256(spec.model_dump_json().encode()).hexdigest(),
-                'scope':'bounded local exploratory FEA; no member retyping or engineering release'})
+                'scope':'bounded geometry trials and evidence-checked generation repairs; no arbitrary retyping or engineering release'})
 
     def _session(self) -> CasinoSession:
         if self.layout_id not in self.sessions:
@@ -144,6 +145,7 @@ class OptimizationEnvironment:
                 max_wall_utilization=float(raw['max_wall_shear_ratio']/raw['max_wall_shear_limit']))
         evidence=self._review_evidence(best[0]) if self.design_review and best else {}
         feedback={k:v for k,v in self.modification_feedback.items() if k not in ('before','after')}
+        feedback['trial_history']=[dict(row) for row in self.design_trial_history]
         if self.trial_evidence:
             feedback['after']=get_design_overview(self.trial_evidence)
             feedback['before']={k:self.modification_feedback['before'][k] for k in ('evaluation_id','raw_response')}
@@ -197,6 +199,7 @@ class OptimizationEnvironment:
                 'agent_review':decision.review.model_dump() if decision.review else None,'adopted':decision.action=='ACCEPT_MODIFICATION',
                 'status':'ADOPTED' if decision.action=='ACCEPT_MODIFICATION' else 'REJECTED'}
             self.pending_modification=None
+            self.design_trial_history[-1]['agent_action']=decision.action
         elif decision.action == "CONTINUE_OPTIMIZATION":
             session = None
             try:
@@ -259,6 +262,9 @@ class OptimizationEnvironment:
         evidence=self.trial_evidence if query.source=='trial' else self.review_cache.get(before.design_evidence.get('evaluation_id'))
         try:
             if evidence is None:raise ValueError('No verified analysis is available for the requested source')
+            if any(r['query']==query.model_dump() and r['result'].get('evaluation_id')==evidence['evaluation_id']
+                   and r['result'].get('layout_sha256')==evidence['layout_sha256'] for r in self.query_results):
+                raise ValueError('Identical query already returned facts for this unchanged analysis. Its result remains in design_query_results; no new evidence. Use those facts to propose a trial, investigate a different object/region, or request human review.')
             if query.tool=='get_design_overview':result=get_design_overview(evidence)
             elif query.tool=='inspect_member':
                 provenance=self.generation_provenance if self.generation_provenance and self.generation_provenance['layout_sha256']==evidence['layout_sha256'] else None
@@ -271,6 +277,10 @@ class OptimizationEnvironment:
         # Query IDs count files, so clearing stale in-context results never overwrites audit.
         index=len(list((self.directory/'queries').glob('query_*.json')))+1
         row['evidence_ref']=f'queries/query_{index:05d}.json'
+        # Repeated reads replace only the identical in-context query. Audit files remain immutable.
+        self.query_results=[r for r in self.query_results if not (
+            r['query']==row['query'] and r['result'].get('evaluation_id')==result.get('evaluation_id')
+            and r['result'].get('layout_sha256')==result.get('layout_sha256'))]
         self.query_results.append(row)
         write_json(self.directory/row['evidence_ref'],row)
 
@@ -290,6 +300,20 @@ class OptimizationEnvironment:
                 candidate = self.layouts[self.layout_id]
                 next_design = apply_parameter_modification(candidate, design, self.spec, decision.modification,
                     protected_member_ids=frozenset(self.local_config.protected_member_ids))
+            elif decision.modification.operation == 'repair_generated_layout':
+                from struct_agent.schemas.state import ParameterModification
+                current=self.layouts[self.layout_id]
+                next_design=design
+                if decision.modification.parameter_updates:
+                    next_design=apply_parameter_modification(current,design,self.spec,
+                        ParameterModification(operation='set_design_parameters',
+                            source_evaluation_id=source.evaluation_id,
+                            source_layout_sha256=decision.modification.source_layout_sha256,
+                            parameter_updates=decision.modification.parameter_updates),
+                        protected_member_ids=frozenset(self.local_config.protected_member_ids))
+                candidate=apply_layout_repair(current,self.rooms,design,decision.modification,
+                    protected_member_ids=frozenset(self.local_config.protected_member_ids))
+                next_design=next_design.model_copy(update={'layout_id':candidate.layout_id})
             else:
                 candidate=apply_design_modification(self.layouts[self.layout_id],self.rooms,design,decision.modification,
                     protected_member_ids=frozenset(self.local_config.protected_member_ids))
@@ -318,15 +342,20 @@ class OptimizationEnvironment:
                 old_issues={(i['code'],tuple(i['source_member_ids'])) for i in before['geometry_review']['issues']}
                 new_issues=[i for i in after['geometry_review']['issues']
                     if (i['code'],tuple(i['source_member_ids'])) not in old_issues]
-                def failed_member_checks(evidence: dict) -> set[tuple]:
-                    return {(tuple(row['source_member_ids']),p['story'],kind)
-                        for row in evidence['member_checks'] for p in row['problems']
-                        for kind in (('shear',) if not p['shear_passed'] else ())+
-                            (('reinforcement',) if p['reinforcement_passed'] is False else
-                             ('reinforcement_unchecked',) if p['reinforcement_passed'] is None else ())}
-                new_member_failures=sorted(failed_member_checks(after)-failed_member_checks(before))
+                comparison=compare_design_trials(before,after,{m.member_id:m.member_id for m in candidate.members})
+                new_member_failures=comparison['new_source_story_checks']
                 violation=lambda r:sum(r.metrics['normalized_violations'].values())
-                eligible=not new_failures and not new_issues and not new_member_failures and (
+                # Detailing screens are informational. New physical short walls remain hard failures.
+                hard_issues=[i for i in new_issues if i['code']=='SHORT_WALL_PIER']
+                repair=decision.modification.operation=='repair_generated_layout'
+                if repair:
+                    new_failures=[k for k in new_failures if k not in ('design_failed_beam_count','design_failed_wall_count')]
+                    progress=(result.feasible or (
+                        comparison['failed_source_story_checks_after']<=comparison['failed_source_story_checks_before']
+                        and comparison['layout_findings_after']<=comparison['layout_findings_before']))
+                else:
+                    progress=not new_member_failures
+                eligible=not new_failures and not hard_issues and progress and (
                     result.feasible or (not baseline.feasible and violation(result)<=violation(baseline)+1e-12))
                 # The retained plan/rooms are already in state. Supply every trial
                 # member check and changed segment without repeating architecture.
@@ -338,13 +367,28 @@ class OptimizationEnvironment:
                 feedback['changed_parameters'] = {k: {'before': design.values[k], 'after': actual.values[k]}
                     for k in actual.values if actual.values[k] != design.values[k]}
                 feedback.update(status='AWAITING_AGENT_ASSESSMENT',eligible_for_adoption=eligible,
+                    violation_before=violation(baseline),violation_after=violation(result),
+                    normalized_violations_before=baseline.metrics['normalized_violations'],
+                    normalized_violations_after=result.metrics['normalized_violations'],
+                    adoption_blockers={
+                        'new_failed_global_or_count_checks':new_failures,
+                        'new_physical_short_walls':hard_issues,
+                        'total_violation_worsened':violation(result)>violation(baseline)+1e-12,
+                        'source_or_layout_progress_gate_failed':not progress},
                     new_failed_checks=new_failures,new_geometry_issues=new_issues,
+                    source_member_comparison=comparison,
                     new_member_failures=new_member_failures,fea_consumed=1,
                     before={k:before[k] for k in before_keys},after=trial_view,
                     material_cost_before=baseline.objectives['material_cost'],
                     material_cost_after=result.objectives['material_cost'],
-                    adoption_gate='Agent must explicitly accept; no new failed global checks, increased failure counts, new geometry issues or worse total violation. Cost increase alone is permitted.')
+                    adoption_gate='Explicit Agent adoption required. No new failed global checks, physical short walls or worse total violation. Repairs also require non-worsening failed source/story coverage and layout finding counts unless mechanically feasible. Local utilization changes are reported for investigation, not an independent veto. Detailing screens are informational; cost may increase.')
                 self.pending_modification=(candidate,actual,result)
+        self.design_trial_history.append({'instruction':feedback['instruction'],'status':feedback['status'],
+            'eligible_for_adoption':feedback['eligible_for_adoption'],'fea_consumed':feedback['fea_consumed'],
+            'reason':feedback.get('reason'),'comparison':{k:v for k,v in feedback.get('source_member_comparison',{}).items()
+                if k not in ('new_source_story_checks','resolved_source_story_checks')},
+            'adoption_blockers':feedback.get('adoption_blockers'),
+            'changed_parameters':feedback.get('changed_parameters')})
         self.modification_feedback=feedback
         write_json(self.directory/f'local/design_trial_{self.modification_count:05d}.json',feedback)
 

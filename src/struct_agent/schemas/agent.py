@@ -130,6 +130,7 @@ def validate_decision(decision: Decision, state: OptimizationState) -> Decision:
         for m in state.design_evidence.get('attention_members',[]):
             known.add(m['member_id']);known.update(m['source_member_ids'])
         for m in state.design_evidence.get('shortest_axis_segments',[]):known.add(m['member_id'])
+        for item in state.design_evidence.get('layout_attention',[]):known.update(item['source_member_ids'])
         for query in state.design_query_results:
             result=query['result']
             known.update(m['member_id'] for m in result.get('members',[]))
@@ -154,7 +155,13 @@ def validate_decision(decision: Decision, state: OptimizationState) -> Decision:
                     inspected.update(m['member_id'] for m in result['members'])
             if not inspected.intersection(affected):
                 raise ValueError('Inspect an affected member or region in the current analysis before proposing a modification')
+            if decision.modification.operation == 'repair_generated_layout':
+                targets={mid for step in decision.modification.repairs for mid in step.member_ids}
+                if targets-inspected:
+                    raise ValueError('Inspect every requested repair target in the current layout first')
         if decision.action=='FINALIZE' and state.current_best_feasible is not True and (
                 decision.tool_call_id or not decision.review.unresolved):
             raise ValueError('An unverified or infeasible result must state unresolved issues')
+        if decision.action=='FINALIZE' and state.design_evidence.get('unresolved_layout_findings_count',0):
+            raise ValueError('Investigate and repair mechanical layout findings before finishing; use human review if unresolved')
     return decision

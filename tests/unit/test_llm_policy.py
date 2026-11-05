@@ -95,6 +95,9 @@ def test_llm_receives_queries_parameter_trial_and_makes_explicit_adoption(tmp_pa
             return tool_response('accept_modification')
         assert visible['design_evidence']['design']['values']['conc_bot']=='C35'
         assert not visible['design_query_results']
+        assert len(payload['messages'])==4  # Accepted design rebases obsolete raw query context.
+        assert any(t['tool']=='set_design_parameters' for t in visible['completed_tool_calls'])
+        assert visible['modification_feedback']['trial_history']
         return tool_response('finish_design')
     client = ChatClient(ChatConfig(), SecretStr('synthetic-only'), tmp_path/'api', transport=transport)
     policy = LLMPolicy(client, tmp_path/'decisions')
@@ -282,3 +285,61 @@ def test_llm_cannot_supply_coordinates_or_invent_local_candidates(tmp_path: Path
         transport=lambda *args:tool_response('adjust_local_layout',arguments))
     decision=LLMPolicy(client,tmp_path/'decisions').choose(state)
     assert decision.action=='REQUEST_HUMAN_REVIEW' and len(env.evaluator.records)==1
+
+
+def test_repair_tool_requires_current_target_queries_and_returns_rejection_without_fea(tmp_path):
+    from tests.unit.test_optimization_env import local_env
+    from struct_agent.agents.policies import decision_tools, decision_from_tool_call
+    from struct_agent.schemas.state import Decision, DesignQuery
+    env=local_env(tmp_path/'env',design_review=True)
+    assert 'repair_generated_layout' not in [t['function']['name'] for t in decision_tools(env.observe())]
+    state=env.step(Decision(action='QUERY_DESIGN',reason='Synthetic investigation',evidence_refs=env.observe().evidence_refs,
+        query=DesignQuery(tool='inspect_member',member_id='wl')))
+    args={'repairs':[{'kind':'remove_unsupported_wall_group','member_ids':['wl']}]}
+    call={'id':'test_repair','type':'function','function':{'name':'repair_generated_layout','arguments':json.dumps(args)}}
+    decision=decision_from_tool_call(call,state)
+    after=env.step(decision)
+    assert after.modification_feedback['status']=='GEOMETRY_REJECTED'
+    assert after.fea_calls_used==1 and env.pending_modification is None
+    assert after.modification_feedback['trial_history'][-1]['reason']
+    args['repairs'][0]['member_ids']=['wl','wr']
+    call['function']['arguments']=json.dumps(args)
+    with pytest.raises(ValueError,match='every requested repair target'):
+        decision_from_tool_call(call,env.observe())
+
+
+def test_passing_mechanics_does_not_hide_unresolved_layout_findings(tmp_path):
+    from tests.unit.test_optimization_env import local_env
+    from struct_agent.agents.policies import decision_tools
+    from struct_agent.schemas.state import Decision
+    from struct_agent.schemas.agent import validate_decision
+    env=local_env(tmp_path/'env',design_review=True)
+    state=env.observe()
+    state=state.model_copy(update={'design_evidence':dict(state.design_evidence,unresolved_layout_findings_count=1)})
+    assert state.current_best_feasible is True
+    assert 'finish_design' not in [t['function']['name']for t in decision_tools(state)]
+    with pytest.raises(ValueError,match='mechanical layout findings'):
+        validate_decision(Decision(action='FINALIZE',reason='Synthetic finish',tool_call_id='test',
+            evidence_refs=state.evidence_refs),state)
+
+
+def test_native_conversation_retains_query_sequence_without_repeating_old_results(tmp_path):
+    from tests.unit.test_optimization_env import local_env
+    env=local_env(tmp_path/'env',design_review=True)
+    requests=[]
+    def transport(url,headers,payload,timeout):
+        requests.append(payload)
+        n=len(requests)
+        if n<3:
+            return tool_response('inspect_member',{'member_id':'b' if n==1 else 'wl'})
+        visible=json.loads(payload['messages'][-1]['content'])
+        assert visible['design_evidence']['unchanged'] is True
+        assert [q['result']['requested_member_id'] for q in visible['design_query_results']]==['wl']
+        old=json.loads(payload['messages'][3]['content'])
+        assert old['design_query_results'][0]['result']['requested_member_id']=='b'
+        assert payload['messages'][2]['tool_calls'][0]['function']['name']=='inspect_member'
+        return tool_response('finish_design')
+    policy=LLMPolicy(ChatClient(ChatConfig(),SecretStr('test-only'),tmp_path/'api',transport=transport),tmp_path/'decisions')
+    for _ in range(3):
+        env.step(policy.choose(env.observe()))
+    assert env.status=='COMPLETED' and len(requests[-1]['messages'])==6

@@ -155,7 +155,11 @@ def close_wall_junction_gaps(layout: LayoutCandidate, rooms: RoomGraph) -> tuple
         return layout, []
     polygons = [Polygon(p) for p in rooms.room_polygons]
     floor = unary_union([Polygon(p) for p in layout.slabs])
-    if floor.hausdorff_distance(unary_union(polygons)) > .002:
+    architecture = unary_union(polygons)
+    # Match the existing slab generator, which fills interior room-union holes.
+    components = (architecture,) if architecture.geom_type == 'Polygon' else architecture.geoms
+    expected_floor = unary_union([Polygon(p.exterior) for p in components])
+    if floor.hausdorff_distance(expected_floor) > .002:
         raise ValueError('Room graph does not match layout for junction preprocessing')
     boundaries = unary_union([p.boundary for p in polygons]).buffer(.002)
     openings = [Polygon(p) for p in rooms.opening_polygons]
@@ -231,6 +235,21 @@ def close_wall_junction_gaps(layout: LayoutCandidate, rooms: RoomGraph) -> tuple
     return result, events
 
 
+def _normalize_generated_slabs(layout: LayoutCandidate) -> LayoutCandidate:
+    """Remove overlapping generated slab area before mass/load summation. XY m."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    polygons = [Polygon(p) for p in layout.slabs]
+    floor = unary_union(polygons)
+    if sum(p.area for p in polygons)-floor.area <= 1e-8:
+        return layout
+    components = (floor,) if floor.geom_type == 'Polygon' else tuple(floor.geoms)
+    if any(p.interiors for p in components):
+        raise ValueError('Overlapping generated slabs contain unresolved interior openings')
+    slabs = tuple(tuple((float(x),float(y)) for x,y in p.exterior.coords) for p in components)
+    return layout.model_copy(update={'slabs':slabs})
+
+
 def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: str,
                            symmetry_axis_mm: float | None = None) -> LayoutCandidate:
     """Retain upstream topology construction, including beam roles and slabs."""
@@ -258,7 +277,7 @@ def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: s
             raw["beams"].append(item)
     layout = layout_from_legacy(raw, unit="mm", layout_id=layout_id,
                                source="rcgnn" if symmetry_axis_mm is None else "rcgnn_symmetry_union")
-    return close_wall_junction_gaps(preprocess_short_members(layout), graph)[0]
+    return close_wall_junction_gaps(preprocess_short_members(_normalize_generated_slabs(layout)), graph)[0]
 
 
 def trace_layout_generation(graph: RoomGraph, ratios: np.ndarray, layout: LayoutCandidate) -> dict[str, Any]:
@@ -308,6 +327,8 @@ def trace_layout_generation(graph: RoomGraph, ratios: np.ndarray, layout: Layout
         if m['type']=='shearwall':raw['shearwalls'].append(row)
         else:raw['beams'].append({**row,'beam_role':m['beam_role']})
     before=layout_from_legacy(raw,unit='mm',layout_id=layout.layout_id,source=layout.source)
+    original_slab_area = sum(Polygon(p).area for p in before.slabs)
+    before = _normalize_generated_slabs(before)
     replay=preprocess_short_members(before)
     stages['before_wall_junction_closure']=[m.model_dump(mode='json') for m in replay.members]
     replay,junction_closures=close_wall_junction_gaps(replay,graph)
@@ -325,6 +346,9 @@ def trace_layout_generation(graph: RoomGraph, ratios: np.ndarray, layout: Layout
     return {'verified':True,'layout_sha256':hashlib.sha256(layout.model_dump_json().encode()).hexdigest(),
         'units':'global_xy_m','stages':stages,'preprocessing_beam_chains':chains,
         'junction_closures':junction_closures,'original_openings_available':graph.opening_polygons is not None,
+        'slab_preprocessing':{'original_area_m2':original_slab_area,
+            'normalized_area_m2':sum(Polygon(p).area for p in before.slabs),
+            'overlap_removed_m2':original_slab_area-sum(Polygon(p).area for p in before.slabs)},
         'preprocessing_chain_rule':'Endpoint-connected collinear beam chains are grouped without splitting at perpendicular wall supports; the 180mm test applies to the chain, not each FE beam segment.',
         'settings':{'snap_tolerance_m':.002,'wall_gap_merge_m':.2,'min_wall_length_m':.1},
         'scope':'Replayed generator and adapter preprocessing, not original construction intent or DXF semantic validation.'}

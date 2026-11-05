@@ -61,7 +61,7 @@ def design_review_evidence(layout: LayoutCandidate, rooms: RoomGraph, design: De
     """
     import hashlib
     from shapely.geometry import LineString, Polygon
-    from struct_agent.services.model_review import review_geometry
+    from struct_agent.services.model_review import review_geometry, inspect_layout_relations
     from struct_agent.adapters.fea import native_topology
     from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import beam_spans
     members=load_members(directory/'members.json',expected_fidelity=fidelity)
@@ -101,6 +101,7 @@ def design_review_evidence(layout: LayoutCandidate, rooms: RoomGraph, design: De
             'semantics':'Room use labels unavailable. Masks are normalized intervals on 8 ordered half-edges; exclusions include openings. No visual image was supplied.'},
         'raw_response':raw,'global_checks':checks['overall'],'direction_checks':checks['directions'],
         'geometry_review':review_geometry(layout,design=design).model_dump(),
+        'layout_relations':inspect_layout_relations(layout,rooms,design),
         'member_checks':rows,'analysis_beam_spans':spans,
         'coverage':{'member_story_rows':len(members),'physical_members':len(rows),
             'aggregation':'Governing shear per physical member plus every failed or unchecked story; full plan has every source segment.',
@@ -125,6 +126,14 @@ def get_design_overview(evidence: dict[str, Any]) -> dict[str, Any]:
         'shortest_axis_segments':[{'member_id':m['member_id'],'role':m['role'],
             'axis_length_m':LineString([m['start'],m['end']]).length} for m in short],
         'geometry_issue_counts':dict(Counter(i['code'] for i in evidence['geometry_review']['issues'])),
+        'layout_finding_counts':dict(Counter(i['kind'] for i in evidence['layout_relations']['findings'])),
+        'original_openings_available':evidence['layout_relations']['openings_available'],
+        'direction_controls':{name:{
+            'torsion':max(row['metrics'],key=lambda m:m['torsion_ratio']),
+            'drift':max(row['metrics'],key=lambda m:m['drift_max'])}
+            for name,row in evidence['direction_checks'].items() if row['metrics']},
+        'unresolved_layout_findings_count':len(evidence['layout_relations']['findings']),
+        'layout_attention':evidence['layout_relations']['findings'][:8],
         'query_tools':{'get_design_overview':{},'inspect_member':{'member_id':'exact source or physical member ID'},
             'inspect_region':{'bounds_m':'[xmin,ymin,xmax,ymax], global XY metres','offset':0,'limit':12}},
         'interpretation':{'physical_span_m':'Existing support-axis span, NOT verified face-to-face clear span.',
@@ -187,6 +196,8 @@ def inspect_member(evidence: dict[str, Any], member_id: str, *, provenance: dict
         'adjacent_rooms':[{'room_index':i,'polygon':evidence['rooms']['polygons'][i],
             'allowed_half_edge_intervals':evidence['rooms']['allowed_half_edge_intervals'][i]} for i in room_ids],
         'checks':diagnostics,'analysis_spans':[s for s in evidence['analysis_beam_spans'] if set(ids).intersection(s['source_member_ids'])],
+        'layout_relations':{k:[r for r in evidence['layout_relations'][k] if set(ids).intersection(r['source_member_ids'])]
+            for k in ('small_wall_groups','short_wall_limbs','wall_piers','free_wall_tips','beam_spans','opening_conflicts','findings')},
         'generation_provenance':{'available':provenance is not None,'stages':stages,
             'preprocessing_beam_chains':chains,
             'chain_rule':provenance['preprocessing_chain_rule'] if provenance is not None else 'Unknown'},
@@ -212,7 +223,27 @@ def inspect_region(evidence: dict[str, Any], bounds_m: tuple[float,float,float,f
         'members':selected,'checks':[m for m in evidence['member_checks'] if ids.intersection(m['source_member_ids'])],
         'intersecting_room_indices':[i for i,p in enumerate(evidence['rooms']['polygons']) if Polygon(p).intersects(region)],
         'geometry_issues':[i for i in evidence['geometry_review']['issues'] if ids.intersection(i['source_member_ids'])],
+        'layout_relations':{k:[r for r in evidence['layout_relations'][k] if ids.intersection(r['source_member_ids'])]
+            for k in ('small_wall_groups','short_wall_limbs','wall_piers','free_wall_tips','beam_spans','opening_conflicts','findings')},
         'truncation':'Only the requested member page is returned; use next_offset for remaining members.'}
+
+
+def compare_design_trials(before: dict[str, Any], after: dict[str, Any],
+                          member_mapping: dict[str, str]) -> dict[str, Any]:
+    """Compare failures by retained source ID/story, independent of physical grouping."""
+    def failures(evidence: dict) -> set[tuple]:
+        return {(member_mapping.get(mid, mid), p['story'], kind)
+                for row in evidence['member_checks'] for mid in row['source_member_ids']
+                for p in row['problems'] for kind in
+                (('shear',) if not p['shear_passed'] else ()) +
+                (('reinforcement',) if p['reinforcement_passed'] is not True else ())}
+    old, new = failures(before), failures(after)
+    return {'failed_source_story_checks_before':len(old),'failed_source_story_checks_after':len(new),
+            'resolved_source_story_checks':sorted(old-new),'new_source_story_checks':sorted(new-old),
+            'layout_findings_before':len(before['layout_relations']['findings']),
+            'layout_findings_after':len(after['layout_relations']['findings']),
+            'max_beam_utilization_before':max((m['governing_shear']['utilization'] for m in before['member_checks'] if m['role']!='wall'),default=0.),
+            'max_beam_utilization_after':max((m['governing_shear']['utilization'] for m in after['member_checks'] if m['role']!='wall'),default=0.)}
 
 
 def evaluate_local_layout_candidates(service: 'AnalysisService', layout: 'LayoutCandidate',

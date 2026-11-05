@@ -15,7 +15,7 @@ from struct_agent._vendor.shearwall_optimization.core.contracts import Evaluatio
 from struct_agent.schemas import DesignCandidate, LayoutCandidate, ProjectSpec, RoomGraph, Member
 from struct_agent.schemas.diagnostics import MemberDiagnostic
 from struct_agent.schemas.layout import WallTipMove, LocalLayoutProposal, LocalLayoutSearch
-from struct_agent.schemas.state import DesignModification, ParameterModification
+from struct_agent.schemas.state import DesignModification, ParameterModification, LayoutRepairModification
 
 
 def apply_design_modification(layout: LayoutCandidate, rooms: RoomGraph, design: DesignCandidate,
@@ -89,6 +89,115 @@ def apply_parameter_modification(layout: LayoutCandidate, design: DesignCandidat
         condition_id=design.condition_id, values=values)
     native_params(candidate, spec)  # Exact domains, condition binding and mm conversion; no FEA.
     return candidate
+
+
+def apply_layout_repair(layout: LayoutCandidate, rooms: RoomGraph, design: DesignCandidate,
+        instruction: LayoutRepairModification, *,
+        protected_member_ids: frozenset[str] = frozenset()) -> LayoutCandidate:
+    """Repair reviewed generated geometry, retaining every source ID and axis.
+
+    The Agent selects objects/repair types, not coordinates or FE element types.
+    All changes remain trials until full FEA and explicit adoption.
+    """
+    from shapely.geometry import LineString, Point, Polygon
+    from shapely.ops import unary_union
+    from struct_agent.services.model_review import inspect_layout_relations
+    from struct_agent._vendor.shearwall_modeling.geometry.wall_piers import beam_spans, wall_piers
+    from .fea import native_topology
+    if design.layout_id != layout.layout_id or instruction.source_layout_sha256 != hashlib.sha256(layout.model_dump_json().encode()).hexdigest():
+        raise ValueError('Stale source layout or design mismatch')
+    architecture = unary_union([Polygon(p) for p in rooms.room_polygons])
+    components = (architecture,) if architecture.geom_type == 'Polygon' else architecture.geoms
+    expected_floor = unary_union([Polygon(p.exterior) for p in components])
+    if unary_union([Polygon(p) for p in layout.slabs]).hausdorff_distance(expected_floor) > .002:
+        raise ValueError('Room graph does not match layout')
+    candidate = layout
+    for step in instruction.repairs:
+        by_id = {m.member_id: m for m in candidate.members}
+        selected = set(step.member_ids)
+        if selected-set(by_id):
+            raise ValueError('Unknown repair member')
+        relations = inspect_layout_relations(candidate, rooms, design)
+        members = list(candidate.members)
+        if step.kind == 'remove_unsupported_wall_group':
+            group = next((g for g in relations['small_wall_groups'] if selected <= set(g['source_member_ids'])), None)
+            if group is None:
+                raise ValueError('No complete unsupported short-wall group: attached long walls cannot be retyped')
+            ids = set(group['source_member_ids'])
+            members = [m.model_copy(update={'role': 'secondary'}) if m.member_id in ids else m for m in members]
+        elif step.kind == 'trim_wall_return':
+            if len(selected) != 1:
+                raise ValueError('Inspect and select one wall-end return')
+            m = by_id[next(iter(selected))]
+            if m.role != 'wall' or math.dist(m.start, m.end) > .18:
+                raise ValueError('Only an existing wall-end return of at most 180 mm can be repaired')
+            topology = native_topology(candidate)
+            pier = next(p for p in wall_piers(topology.walls) if candidate.members.index(m) in p.source_ids)
+            if pier.member.length < .8:
+                raise ValueError('Wall return must belong to a longer physical wall')
+            contacts = [[n for n in members if n != m and LineString([n.start, n.end]).distance(Point(p)) < 1e-7]
+                        for p in (m.start, m.end)]
+            if not any(len(c) == 1 and c[0].role != 'wall' for c in contacts):
+                raise ValueError('Return has no free wall/beam tip; real branch/support nodes cannot be crossed')
+            members = [n.model_copy(update={'role': 'secondary'}) if n == m else n for n in members]
+        elif step.kind == 'unify_beam_span':
+            if any(by_id[i].role == 'wall' for i in selected):
+                raise ValueError('Select beam members, not walls, for beam section classification')
+            ids = {candidate.members[i].member_id for span in beam_spans(native_topology(candidate).beams,
+                    native_topology(candidate).walls)
+                   if selected.intersection(candidate.members[i].member_id for i in span.source_ids)
+                   for i in span.source_ids}
+            members = [m.model_copy(update={'role': step.beam_role}) if m.member_id in ids else m for m in members]
+        else:
+            if rooms.opening_polygons is None:
+                raise ValueError('Original opening geometry is unavailable; cannot align openings')
+            openings = unary_union([Polygon(p) for p in rooms.opening_polygons])
+            for member_id in selected:
+                i = next(i for i, m in enumerate(members) if m.member_id == member_id)
+                m = members[i]
+                if m.role != 'wall':
+                    raise ValueError('Opening alignment requires a wall')
+                line = LineString([m.start, m.end])
+                if line.intersection(openings).length < 1e-7:
+                    raise ValueError(f'{member_id} does not intrude into an opening')
+                remaining = line.difference(openings.buffer(.001, join_style=2))
+                if remaining.geom_type != 'LineString' or remaining.length < 1e-6:
+                    raise ValueError('Opening would split or remove wall; no automatic repair')
+                a, b = list(remaining.coords)[0], list(remaining.coords)[-1]
+                if math.dist(a, m.start) > math.dist(b, m.start):
+                    a, b = b, a
+                a, b = tuple(round(v, 6) for v in a), tuple(round(v, 6) for v in b)
+                moves = [(old, new) for old, new in ((m.start, a), (m.end, b)) if math.dist(old, new) > 1e-8]
+                if len(moves) != 1:
+                    raise ValueError('Repair must move one free endpoint')
+                old, new = moves[0]
+                touching = [j for j, n in enumerate(members) if j != i and LineString([n.start, n.end]).distance(Point(old)) < 1e-7]
+                if len(touching) != 1 or members[touching[0]].role == 'wall':
+                    raise ValueError('Opening repair cannot move branch/support nodes')
+                j = touching[0]
+                beam = members[j]
+                if old not in (beam.start, beam.end):
+                    raise ValueError('Opening repair requires an existing shared endpoint')
+                members[i] = m.model_copy(update={'start': a, 'end': b})
+                members[j] = beam.model_copy(update={'start': new if beam.start == old else beam.start,
+                                                     'end': new if beam.end == old else beam.end})
+        candidate = LayoutCandidate.model_validate({**candidate.model_dump(), 'members': tuple(members)})
+    changed = {a.member_id for a, b in zip(layout.members, candidate.members) if a != b}
+    if not changed or changed & protected_member_ids:
+        raise ValueError('Repair is unchanged or affects a protected member')
+    before_axis = unary_union([LineString([m.start, m.end]) for m in layout.members])
+    after_axis = unary_union([LineString([m.start, m.end]) for m in candidate.members])
+    if before_axis.hausdorff_distance(after_axis) > 1e-7:
+        raise ValueError('Repair changes structural axis coverage')
+    old_walls = unary_union([LineString([m.start, m.end]) for m in layout.members if m.role == 'wall'])
+    new_walls = unary_union([LineString([m.start, m.end]) for m in candidate.members if m.role == 'wall'])
+    if new_walls.difference(old_walls.buffer(1e-8)).length > 1e-7:
+        raise ValueError('Repair cannot add unreviewed wall geometry')
+    from struct_agent.services.model_review import review_geometry
+    if review_geometry(candidate).requires_model_repair:
+        raise ValueError('Repair leaves an unsupported physical short wall')
+    digest = hashlib.sha256(candidate.model_dump_json().encode()).hexdigest()[:12]
+    return candidate.model_copy(update={'layout_id': f'{layout.layout_id}_repair_{digest}', 'source': 'reviewed_generation_repair'})
 
 
 def ordered_domain(variable: VariableSpec) -> list[Any]:

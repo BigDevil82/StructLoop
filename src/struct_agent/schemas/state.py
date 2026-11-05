@@ -72,13 +72,28 @@ class ParameterModification(Contract):
         return self
 
 
+class LayoutRepairStep(Contract):
+    """Evidence-selected generation repairs; no arbitrary source coordinates."""
+    kind: Literal['remove_unsupported_wall_group', 'trim_wall_return', 'unify_beam_span', 'align_opening_edges']
+    member_ids: tuple[str, ...] = Field(min_length=1)
+    beam_role: Literal['primary', 'secondary'] = 'primary'
+
+
+class LayoutRepairModification(Contract):
+    operation: Literal['repair_generated_layout']
+    source_evaluation_id: str
+    source_layout_sha256: str
+    repairs: tuple[LayoutRepairStep, ...] = Field(min_length=1, max_length=32)
+    parameter_updates: dict[str, float | str] = Field(default_factory=dict)
+
+
 class Decision(Contract):
     action: Action
     reason: str = Field(min_length=1)
     evidence_refs: tuple[str, ...] = ()
     target_layout_id: str | None = None
     review: DesignReview | None = None
-    modification: Annotated[DesignModification | ParameterModification, Field(discriminator='operation')] | None = None
+    modification: Annotated[DesignModification | ParameterModification | LayoutRepairModification, Field(discriminator='operation')] | None = None
     query: DesignQuery | None = None
     tool_call_id: str | None = Field(default=None, min_length=1)
     inspected_member_ids: tuple[str, ...] = ()
