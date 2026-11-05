@@ -4,6 +4,20 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+def _field_default(field: object) -> object:
+    """A placeholder for every ParametricAnalysisResult field.
+
+    Optional fields take None, which is a real state: a run that skipped
+    reinforcement design leaves the five design fields unset.
+    """
+    kinds = getattr(getattr(field, "type", None), "__args__", (getattr(field, "type", None),))
+    for kind, value in ((bool, True), (int, 0), (float, 1.0), (str, "")):
+        if kind in kinds:
+            return value
+    return None
+
+
+
 import pytest
 
 from struct_agent.agents.policies import FixedPolicy, RulePolicy
@@ -139,13 +153,12 @@ def local_env(tmp_path: Path, *, mode: str='improve', budget: int=4, design_revi
     class Solver:
         fidelity='mock'
         diagnostics_directory=tmp_path/'diagnostics'
-        def evaluate(self,candidate,parameters,conditions,*,evaluation_id):
+        def evaluate(self,candidate,parameters,conditions,*,evaluation_id,detail=True):
             if not allow_parameter_edits:
                 assert parameters.values==design.values
             if mode=='fail' and evaluation_id=='eval_00002':raise ArithmeticError('synthetic local trial failure')
             initial=evaluation_id=='eval_00001';passed=initial or mode!='reject'
-            raw={f.name:True if f.type is bool else 0 if f.type is int else 1. if f.type is float else ''
-                for f in fields(ParametricAnalysisResult)}
+            raw={f.name:_field_default(f) for f in fields(ParametricAnalysisResult)}
             raw.update(feasible=passed,design_passed=passed,design_failed_wall_count=0 if passed else 1,
                 material_concrete_kg=100000. if initial else 101000. if mode=='cost_increase' else 99000.,material_steel_kg=1000.,
                 torsion_ratio=1.2,period_ratio=.8,max_drift_ratio=.0005,
@@ -518,7 +531,7 @@ def feedback_fixture(tmp_path: Path, mode: str, budget: int = 8) -> tuple:
         diagnostics_directory = tmp_path/'diagnostics'
         def __init__(self) -> None:
             self.seen: set[str] = set()
-        def evaluate(self, candidate, parameters, conditions, *, evaluation_id):
+        def evaluate(self, candidate, parameters, conditions, *, evaluation_id, detail=True):
             if mode == 'solver_error':
                 raise ArithmeticError('Synthetic analysis failure')
             token = json.dumps(parameters.values, sort_keys=True)
@@ -534,8 +547,7 @@ def feedback_fixture(tmp_path: Path, mode: str, budget: int = 8) -> tuple:
             if wall_failure or (mode == 'verification_error' and repeat):
                 passed = False
             ratio = .15 if passed else .24 if grade == 'C30' else .22
-            raw = {f.name: True if f.type is bool else 0 if f.type is int else 1. if f.type is float else ''
-                   for f in fields(ParametricAnalysisResult)}
+            raw = {f.name: _field_default(f) for f in fields(ParametricAnalysisResult)}
             raw.update(feasible=passed, design_passed=passed, design_failed_beam_count=0 if passed else 1,
                 design_failed_wall_count=int(wall_failure), material_concrete_kg=100000., material_steel_kg=1000.,
                 torsion_ratio=1.2, period_ratio=.8, max_drift_ratio=.0005, max_wall_axial_ratio=.2,

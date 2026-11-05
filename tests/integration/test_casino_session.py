@@ -62,7 +62,7 @@ class SyntheticNativeResponseSolver:
         self.force_infeasible = force_infeasible
 
     def evaluate(self, layout: LayoutCandidate, design: DesignCandidate, spec: ProjectSpec,
-                 *, evaluation_id: str) -> AnalysisRecord:
+                 *, evaluation_id: str, detail: bool | str = True) -> AnalysisRecord:
         if self.fail:
             raise RuntimeError("Injected mock solver failure")
         thickness = float(design.values["tw_bot"])

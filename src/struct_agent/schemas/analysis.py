@@ -42,6 +42,6 @@ class AnalysisRecord(Contract):
             raise ValueError("Successful analysis requires feasibility and no error")
         if self.status == "SUCCESS" and self.fidelity == "full":
             response = NativeResponse.model_validate(self.raw)
-            if self.feasible != (response.feasible and response.design_passed):
+            if self.feasible != (response.feasible and response.design_passed is True):
                 raise ValueError("Feasibility disagrees with native check/design results")
         return self

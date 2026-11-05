@@ -8,8 +8,12 @@ from .types import ParametricAnalysisResult
 
 
 def summarize_native(build: ModelBuildResult, analysis: AnalysisResult, overall: OverallCheckResult,
-                     directions: dict[str, DirectionCheckResult], design: ReinforcementDesignSummary) -> ParametricAnalysisResult:
-    """Reproduce upstream worst utilization, including last-item tie resolution."""
+                     directions: dict[str, DirectionCheckResult], design: ReinforcementDesignSummary | None) -> ParametricAnalysisResult:
+    """Reproduce upstream worst utilization, including last-item tie resolution.
+
+    ``design`` is None when reinforcement design was skipped; the five fields it
+    owns then stay None so a reader can tell "not measured" from "passed".
+    """
     def worst(items: list, value: str, limit: str) -> tuple[float, float]:
         if not items:
             raise ValueError('Missing member checks cannot be summarized as zero utilization')
@@ -25,9 +29,13 @@ def summarize_native(build: ModelBuildResult, analysis: AnalysisResult, overall:
     periods = analysis.modal_summary.periods[:6]
     periods += [float("nan")] * (6-len(periods))
     metrics = [m for result in directions.values() for m in result.metrics]
-    return ParametricAnalysisResult(converged=True, feasible=overall.is_passed, design_passed=design.is_passed,
-        design_failed_beam_count=len(design.failed_beams), design_failed_wall_count=len(design.failed_walls),
-        material_concrete_kg=design.total_concrete_kg, material_steel_kg=design.total_steel_kg,
+    detailed = design is not None
+    return ParametricAnalysisResult(converged=True, feasible=overall.is_passed,
+        design_passed=design.is_passed if detailed else None,
+        design_failed_beam_count=len(design.failed_beams) if detailed else None,
+        design_failed_wall_count=len(design.failed_walls) if detailed else None,
+        material_concrete_kg=design.total_concrete_kg if detailed else None,
+        material_steel_kg=design.total_steel_kg if detailed else None,
         mass_total_t=(sum(build.floor_load_masses)+sum(build.floor_self_masses))/1000.,
         T1=periods[0], T2=periods[1], T3=periods[2], T4=periods[3], T5=periods[4], T6=periods[5],
         period_ratio=float('nan') if analysis.modal_summary.period_ratio is None else analysis.modal_summary.period_ratio,

@@ -13,7 +13,14 @@ from struct_agent.schemas import AnalysisRecord, DesignCandidate, ErrorRecord, L
 
 class Solver(Protocol):
     def evaluate(self, layout: LayoutCandidate, design: DesignCandidate,
-                 spec: ProjectSpec, *, evaluation_id: str) -> AnalysisRecord: ...
+                 spec: ProjectSpec, *, evaluation_id: str, detail: bool | str = True) -> AnalysisRecord:
+        """Solve and check one design; ``detail`` also runs reinforcement design.
+
+        With detail="auto" the reinforcement pass is skipped when an index check
+        has already failed, which leaves design_passed and the two material
+        masses None rather than inventing values.
+        """
+        ...
 
 
 def native_params(design: DesignCandidate, spec: ProjectSpec) -> Any:
@@ -59,7 +66,13 @@ class OpenSeesAdapter:
         self.analysis_signature = analysis_signature()
 
     def evaluate(self, layout: LayoutCandidate, design: DesignCandidate,
-                 spec: ProjectSpec, *, evaluation_id: str) -> AnalysisRecord:
+                 spec: ProjectSpec, *, evaluation_id: str, detail: bool | str = True) -> AnalysisRecord:
+        """Solve and check one design; ``detail`` also runs reinforcement design.
+
+        With detail="auto" the reinforcement pass is skipped when an index check
+        has already failed, which leaves design_passed and the two material
+        masses None rather than inventing values.
+        """
         import math
         import openseespy.opensees as ops
         from struct_agent._vendor.shearwall_modeling.parametric.analysis import analyze_parametric_model
@@ -80,24 +93,26 @@ class OpenSeesAdapter:
                 enable_auto_scale=False, seed=0, scale_seed=0)
             status = "SOLVER_ERROR"
             if self.diagnostics_directory is None:
-                result = analyze_parametric_model(topology, params, cfg)
+                result = analyze_parametric_model(topology, params, cfg, detail=detail)
             else:
                 from .fea_diagnostics import analyze_detailed
                 result = analyze_detailed(topology, params, cfg, layout=layout,
-                    directory=self.diagnostics_directory / evaluation_id)
+                    directory=self.diagnostics_directory / evaluation_id, detail=detail)
             raw = asdict(result)
             status = "INVALID_RESULT"
-            required = ("material_concrete_kg", "material_steel_kg", "torsion_ratio", "max_drift_ratio",
+            required = ("torsion_ratio", "max_drift_ratio",
                 "period_ratio", "min_shear_weight_ratio", "min_stiffness_ratio",
                 "max_wall_axial_ratio", "max_wall_axial_limit", "max_wall_shear_ratio",
                 "max_wall_shear_limit", "max_beam_shear_ratio", "max_beam_shear_limit")
+            if result.design_passed is not None:
+                required += ("material_concrete_kg", "material_steel_kg")
             if not result.converged or not result.period_ratio_available:
                 raise ValueError("Incomplete/non-converged analysis, including missing period-ratio check")
             if any(not math.isfinite(raw[k]) for k in required):
                 raise ValueError("Nonfinite required analysis metrics")
             return AnalysisRecord(evaluation_id=evaluation_id, **context, fidelity="full", status="SUCCESS",
                 solver="OpenSees/MVLEM_3D", solver_version=str(ops.version()),
-                elapsed_s=perf_counter()-started, feasible=bool(result.feasible and result.design_passed),
+                elapsed_s=perf_counter()-started, feasible=bool(result.feasible and result.design_passed is True),
                 raw=json_safe(raw), error=None,solver_log=str(log_path), analysis_signature=self.analysis_signature)
         except Exception as exc:
             if self.diagnostics_directory is not None:

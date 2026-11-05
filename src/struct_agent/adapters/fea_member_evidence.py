@@ -10,18 +10,26 @@ from struct_agent.schemas.diagnostics import MemberDiagnostic
 
 
 def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, analysis: AnalysisResult,
-                    design: ReinforcementDesignSummary, *, beta_c: float,
+                    design: ReinforcementDesignSummary | None, *, beta_c: float,
                     combination_types: dict[str, str]) -> tuple[MemberDiagnostic, ...]:
+    """Per-member demand and capacity evidence from one solve.
+
+    ``design`` is None when reinforcement design was skipped. Demand, capacity
+    and the controlling combination all come from the analysis and stay
+    available; only the reinforcement fields become unknown.
+    """
     profiles = {p.story: p for p in context.story_profiles}
     rows = []
     groups = (("wall", analysis.wall_uls_metrics, context.wall_story_element_units,
-               analysis.wall_forces_by_combo, design.wall_results),
+               analysis.wall_forces_by_combo, design.wall_results if design else ()),
               ("beam", analysis.beam_uls_metrics, context.beam_element_units,
-               analysis.beam_forces_by_combo, design.beam_results))
+               analysis.beam_forces_by_combo, design.beam_results if design else ()))
     for kind, metrics, units, forces, designs in groups:
         id_field = "wall_id" if kind == "wall" else "beam_id"
         by_key = {(getattr(u, id_field), u.story): u for u in units}
-        design_by_key = {(getattr(d, id_field), d.story): d for d in designs}
+        design_by_key = (
+            {(getattr(d, id_field), d.story): d for d in designs} if design is not None else {}
+        )
         for metric in metrics:
             native_id, story = getattr(metric, id_field), metric.story
             unit = by_key[native_id, story]
@@ -38,7 +46,7 @@ def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, anal
             combo_limits = {name:float(check[1]) for name,check in metric.shear_checks.items()}
             shear = abs(combo_design_shear[metric.shear_control_combo])
             result = design_by_key.get((native_id, story))
-            if result is None:
+            if design is not None and result is None:
                 raise ValueError(f"Modeled member {native_id} story {story} has no reinforcement check")
             source_ids = getattr(unit, 'source_wall_ids', ()) if kind == 'wall' else ()
             rows.append(MemberDiagnostic(native_id=native_id,
@@ -56,7 +64,7 @@ def collect_members(layout: LayoutCandidate, context: AnalysisModelContext, anal
                 combo_design_shear_n=combo_design_shear,
                 control_combo_type=metric.shear_control_combo_type, shear_passed=metric.is_shear_pressure_passed,
                 reinforcement_checked=result is not None, reinforcement_passed=result.is_passed if result else None,
-                compound_section_id=result.compound_section_id if kind=='wall' else None,
-                shared_wall_ids=result.shared_wall_ids if kind=='wall' else (),
+                compound_section_id=result.compound_section_id if kind=='wall' and result else None,
+                shared_wall_ids=result.shared_wall_ids if kind=='wall' and result else (),
                 reinforcement_messages=tuple(result.messages) if result else ()))
     return tuple(rows)

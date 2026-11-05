@@ -16,11 +16,13 @@ class NativeResponse(Contract):
     """
     converged: Literal[True]
     feasible: bool
-    design_passed: bool
-    design_failed_beam_count: int = Field(ge=0)
-    design_failed_wall_count: int = Field(ge=0)
-    material_concrete_kg: float = Field(ge=0.)
-    material_steel_kg: float = Field(ge=0.)
+    # None when the run skipped reinforcement design because an index check had
+    # already failed. None is "not measured": it is never a pass and never zero.
+    design_passed: bool | None
+    design_failed_beam_count: int | None = Field(default=None, ge=0)
+    design_failed_wall_count: int | None = Field(default=None, ge=0)
+    material_concrete_kg: float | None = Field(default=None, ge=0.)
+    material_steel_kg: float | None = Field(default=None, ge=0.)
     mass_total_t: float = Field(gt=0.)
     T1: float = Field(gt=0.)
     T2: float = Field(gt=0.)

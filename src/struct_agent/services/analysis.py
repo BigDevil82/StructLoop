@@ -30,12 +30,14 @@ class AnalysisService:
         self._cache: dict[str, AnalysisRecord] = {}
 
     def evaluate(self, layout: LayoutCandidate, design: DesignCandidate, spec: ProjectSpec, *,
-                 force_reanalysis: bool = False) -> AnalysisRecord:
+                 force_reanalysis: bool = False, detail: bool | str = True) -> AnalysisRecord:
         design.validate_against(spec)
         if design.layout_id != layout.layout_id:
             raise ValueError("Design/layout mismatch")
         signature = getattr(self.solver, 'analysis_signature', type(self.solver).__qualname__)
-        key = hashlib.sha256((signature+layout.model_dump_json()+spec.model_dump_json()+str(sorted(design.values.items()))).encode()).hexdigest()
+        # detail belongs to the key: a check-only record cannot answer a later
+        # request for reinforcement and material.
+        key = hashlib.sha256((signature+layout.model_dump_json()+spec.model_dump_json()+str(sorted(design.values.items()))+str(detail)).encode()).hexdigest()
         if key in self._cache and not force_reanalysis:
             return self._cache[key]
         if len(self.records) >= self.budget:
@@ -43,7 +45,7 @@ class AnalysisService:
         evaluation_id = f"eval_{len(self.records)+1:05d}"
         # Every attempted call, including exceptions, must consume budget and retain context.
         try:
-            record = self.solver.evaluate(layout, design, spec, evaluation_id=evaluation_id)
+            record = self.solver.evaluate(layout, design, spec, evaluation_id=evaluation_id, detail=detail)
         except Exception as exc:
             import traceback
             from struct_agent.schemas import ErrorRecord

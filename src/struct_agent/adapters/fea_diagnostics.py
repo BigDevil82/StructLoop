@@ -25,8 +25,14 @@ class DiagnosticEvidenceError(RuntimeError):
 
 
 def analyze_detailed(topology: FEMInput, params: ParametricModelParams, cfg: DatasetGenerationConfig,
-                     *, layout: LayoutCandidate, directory: Path) -> ParametricAnalysisResult:
-    """One real solve, no monkey-patching, no change to upstream algorithms/limits."""
+                     *, layout: LayoutCandidate, directory: Path,
+                     detail: bool | str = True) -> ParametricAnalysisResult:
+    """One real solve, no monkey-patching, no change to upstream algorithms/limits.
+
+    ``detail`` decides whether the reinforcement pass runs. Demand and capacity
+    evidence is collected either way; skipping the pass only leaves the
+    reinforcement fields and the material masses unknown.
+    """
     directory.mkdir(parents=True, exist_ok=False)
     logger = logging.getLogger("shearwall_diagnostics")
     logger.setLevel(logging.WARN)
@@ -37,7 +43,8 @@ def analyze_detailed(topology: FEMInput, params: ParametricModelParams, cfg: Dat
         builder = AnalysisResultBuilder(context)
         analysis = builder.build()
         overall, directions = SeismicEvaluationPipeline(model_cfg).evaluate(analysis)
-        design = ReinforcementDesignPipeline(build, analysis, model_cfg, logger).run()
+        want_design = detail is True or (detail == "auto" and overall.is_passed)
+        design = ReinforcementDesignPipeline(build, analysis, model_cfg, logger).run() if want_design else None
         summary = summarize_native(build, analysis, overall, directions, design)
         try:
             write_json(directory / "native_summary.json", asdict(summary))
@@ -55,9 +62,9 @@ def analyze_detailed(topology: FEMInput, params: ParametricModelParams, cfg: Dat
                 "units": [asdict(u) for u in build.wall_story_element_units]})
             write_json(directory / "checks.json", {"overall": asdict(overall),
                 "directions": {k: asdict(v) for k, v in directions.items()},
-                "design_failed_beams": [asdict(x) for x in design.failed_beams],
-                "design_failed_walls": [asdict(x) for x in design.failed_walls],
-                "compound_sections": [asdict(x) for x in design.compound_results],
+                "design_failed_beams": [asdict(x) for x in design.failed_beams] if design else [],
+                "design_failed_walls": [asdict(x) for x in design.failed_walls] if design else [],
+                "compound_sections": [asdict(x) for x in design.compound_results] if design else [],
                 "compound_geometry": [{"section_id":s.section_id,"story":s.story,"wall_ids":s.wall_ids,
                     "polygon":mapping(s.polygon),"boundary":mapping(s.boundary)}
                     for s in compound_wall_sections(context.wall_story_element_units)]})

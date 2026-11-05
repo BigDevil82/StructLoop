@@ -3,6 +3,20 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+def _field_default(field: object) -> object:
+    """A placeholder for every ParametricAnalysisResult field.
+
+    Optional fields take None, which is a real state: a run that skipped
+    reinforcement design leaves the five design fields unset.
+    """
+    kinds = getattr(getattr(field, "type", None), "__args__", (getattr(field, "type", None),))
+    for kind, value in ((bool, True), (int, 0), (float, 1.0), (str, "")):
+        if kind in kinds:
+            return value
+    return None
+
+
+
 import pytest
 
 from struct_agent.adapters.casino import CasinoProblem
@@ -132,8 +146,7 @@ def test_design_failure_feedback_has_resolution_below_binary_failure() -> None:
     p = problem()
     design = DesignCandidate(design_id='synthetic', layout_id=p.layout.layout_id,
         condition_id=p.spec.condition_id, values={v.name: v.values[0] for v in p.spec.design_variables})
-    values = {f.name: True if f.type is bool else 0 if f.type is int else 1.0 if f.type is float else ''
-              for f in fields(ParametricAnalysisResult)}
+    values = {f.name: _field_default(f) for f in fields(ParametricAnalysisResult)}
     values.update(max_drift_ratio=.0005, period_ratio=.8, min_shear_weight_ratio=.1,
                   design_passed=False, design_failed_wall_count=2)
     raw = ParametricAnalysisResult(**values)
@@ -259,12 +272,11 @@ def test_local_evaluation_preserves_failed_attempts_budget_and_input_sections(tm
     design=design.model_copy(update={'condition_id':spec.condition_id,'values':{v.name:v.values[0] for v in spec.design_variables}})
     class SyntheticSolver:
         fidelity='mock'
-        def evaluate(self, candidate, parameters, conditions, *, evaluation_id):
+        def evaluate(self, candidate, parameters, conditions, *, evaluation_id, detail=True):
             assert parameters.values==design.values
             if evaluation_id=='eval_00003':raise ArithmeticError('synthetic local trial failure')
             passed=evaluation_id!='eval_00001'
-            raw={f.name:True if f.type is bool else 0 if f.type is int else 1. if f.type is float else ''
-                 for f in fields(ParametricAnalysisResult)}
+            raw={f.name:_field_default(f) for f in fields(ParametricAnalysisResult)}
             raw.update(feasible=passed,design_passed=passed,beam_shear_passed=passed,
                 design_failed_beam_count=0 if passed else 1,torsion_ratio=1.2,period_ratio=.8,max_drift_ratio=.0005,
                 max_wall_axial_ratio=.2,max_wall_axial_limit=.5,max_wall_shear_ratio=.1,max_wall_shear_limit=.2,

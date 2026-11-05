@@ -12,7 +12,7 @@ class VersionedTestSolver:
     fidelity = 'mock'
     analysis_signature = 'corrected-test-a'
 
-    def evaluate(self, layout: LayoutCandidate, design: DesignCandidate, spec: ProjectSpec, *, evaluation_id: str) -> AnalysisRecord:
+    def evaluate(self, layout: LayoutCandidate, design: DesignCandidate, spec: ProjectSpec, *, evaluation_id: str, detail: bool | str = True) -> AnalysisRecord:
         return AnalysisRecord(evaluation_id=evaluation_id, layout_id=layout.layout_id, condition_id=spec.condition_id,
             design_id=design.design_id, fidelity='mock', status='SUCCESS', feasible=False, raw={}, error=None,
             solver='TEST_ONLY', solver_version='1', elapsed_s=0.)

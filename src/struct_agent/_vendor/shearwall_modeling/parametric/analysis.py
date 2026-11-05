@@ -23,7 +23,15 @@ def build_model_config_from_params(params: ParametricModelParams | dict[str, Any
     # Three-story inputs can have an empty middle zone; it is not a story group.
     return ModelConfig(standard_story_groups=[g for g in groups if g.count > 0], seismic=SeismicConfig(intensity=p.intensity, site_class=p.site_class, seismic_group=p.seismic_group), num_modes=num_modes)
 
-def analyze_parametric_model(input_data: FEMInput, params: ParametricModelParams, cfg: DatasetGenerationConfig, logger: logging.Logger | None=None) -> ParametricAnalysisResult:
+def analyze_parametric_model(input_data: FEMInput, params: ParametricModelParams, cfg: DatasetGenerationConfig, logger: logging.Logger | None=None, detail: bool | str=True) -> ParametricAnalysisResult:
+    """Build, solve, check, and -- when asked -- design the reinforcement.
+
+    ``detail`` is the seam between the two costs: the solve and the eight index
+    checks take about a quarter of a run, reinforcement design the rest, and the
+    latter only produces the member-design verdict and the material masses.
+    Pass False to skip it, or "auto" to skip it when an index check already
+    failed, since detailing cannot change that verdict.
+    """
     run_logger = logger or logging.getLogger('shearwall_parametric')
     run_logger.setLevel(logging.WARN)
     builder = _create_builder(cfg.builder_name, run_logger)
@@ -33,7 +41,8 @@ def analyze_parametric_model(input_data: FEMInput, params: ParametricModelParams
         context = AnalysisModelContext(build_result=build_result, config=model_cfg, logger=run_logger)
         analysis_result = AnalysisResultBuilder(context).build()
         overall_result, dir_results = SeismicEvaluationPipeline(model_cfg).evaluate(analysis_result)
-        design_summary = ReinforcementDesignPipeline(build_result=build_result, analysis_result=analysis_result, config=model_cfg, logger=run_logger).run()
+        want_design = detail is True or (detail == 'auto' and overall_result.is_passed)
+        design_summary = ReinforcementDesignPipeline(build_result=build_result, analysis_result=analysis_result, config=model_cfg, logger=run_logger).run() if want_design else None
         return summarize_native(build_result, analysis_result, overall_result, dir_results, design_summary)
     except Exception as exc:
         raise

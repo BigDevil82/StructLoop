@@ -77,11 +77,14 @@ class LayoutDatasetSummary:
 class ParametricAnalysisResult:
     converged: bool
     feasible: bool
-    design_passed: bool
-    design_failed_beam_count: int
-    design_failed_wall_count: int
-    material_concrete_kg: float
-    material_steel_kg: float
+    # The five design fields are None when the run skipped reinforcement design
+    # (the index checks had already failed, so detailing could not change the
+    # verdict). None means "not measured", never "passed" or "zero".
+    design_passed: bool | None
+    design_failed_beam_count: int | None
+    design_failed_wall_count: int | None
+    material_concrete_kg: float | None
+    material_steel_kg: float | None
     mass_total_t: float
     T1: float
     T2: float
