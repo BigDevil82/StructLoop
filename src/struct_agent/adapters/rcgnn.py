@@ -32,6 +32,8 @@ def graph_from_dxf(path: Path, *, category: int) -> RoomGraph:
         "masks": [a['masks'] for _,a in nodes],
         "opening_polygons": [[[float(p.x)/1000., float(p.y)/1000.] for p in points]
                              for points in extractor.doors + extractor.windows],
+        "infill_wall_polygons": [[[float(p.x)/1000., float(p.y)/1000.] for p in points]
+                                  for points in extractor.infill_walls],
     }
     # JSON mode accepts arrays but still rejects coercion of primitive types.
     import json

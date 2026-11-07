@@ -28,6 +28,9 @@ class RoomGraph(Contract):
     # Original DXF footprints, global XY m [opening, vertex, xy]. None means
     # unavailable (older graphs); () means the source was checked and has none.
     opening_polygons: tuple[tuple[tuple[float, float], ...], ...] | None = None
+    # Original INFILL_WALLS footprints, kept separately from ROOM partition lines.
+    # None denotes an older graph for which the architectural layer is unavailable.
+    infill_wall_polygons: tuple[tuple[tuple[float, float], ...], ...] | None = None
 
     @model_validator(mode="after")
     def dimensions(self) -> RoomGraph:
@@ -56,4 +59,12 @@ class RoomGraph(Contract):
                 polygon = Polygon(points)
                 if not polygon.is_valid or polygon.area <= 0:
                     raise ValueError('Invalid door/window polygon footprint')
+        if self.infill_wall_polygons is not None:
+            from shapely.geometry import Polygon
+            for points in self.infill_wall_polygons:
+                if len(points) < 4:
+                    raise ValueError('Expected infill-wall polygon footprints')
+                polygon = Polygon(points)
+                if not polygon.is_valid or polygon.area <= 0:
+                    raise ValueError('Invalid infill-wall polygon footprint')
         return self
