@@ -197,7 +197,7 @@ def architecture_candidates(
     for row in joint_alignment_candidates(layout, infill, openings, axis_x):
         row["candidate_id"] = _candidate_id(layout, [row["joint_updates"]])
         proposals.append(row)
-    proposals.extend(_redundant_pairs(layout, infill_eps, openings_eps, axis_x))
+    proposals.extend(_redundant_pairs(layout, rooms, infill_eps, openings_eps, axis_x))
     priority = {
         "complete_mirrored_architecture_gap": 0,
         "align_mirrored_wall_beam_joints": 1,
@@ -355,8 +355,13 @@ def _align_wall_opening_joint(
     return adjusted, updates
 
 
-def _redundant_pairs(layout, infill, openings, axis_x) -> list[dict]:
+def _redundant_pairs(layout, rooms, infill, openings, axis_x) -> list[dict]:
+    from .beam_layout import review_beam_grid
+
     beams = [m for m in layout.members if m.role != "wall"]
+    # The architectural layer alone cannot tell whether a beam still connects a
+    # structural wall tip or divides a slab panel that needs support.
+    baseline = review_beam_grid(layout, rooms)
     prior_free = _free_beam_ends(layout.members)
     rows = []
     for i, first in enumerate(beams):
@@ -381,6 +386,17 @@ def _redundant_pairs(layout, infill, openings, axis_x) -> list[dict]:
             remaining = tuple(m for m in layout.members if m.member_id not in removed)
             if _free_beam_ends(remaining) - prior_free:
                 continue
+            reduced = layout.model_copy(update={"members": remaining})
+            after = review_beam_grid(reduced, rooms)
+            if (
+                after["beam_connected_wall_tip_count"]
+                < baseline["beam_connected_wall_tip_count"]
+                or after["max_panel_span_proxy_m"]
+                > max(4.5, baseline["max_panel_span_proxy_m"]) + 0.001
+                or after["max_panel_area_m2"]
+                > max(25.0, baseline["max_panel_area_m2"]) + 0.001
+            ):
+                continue
             rows.append(
                 {
                     "candidate_id": _candidate_id(
@@ -389,7 +405,9 @@ def _redundant_pairs(layout, infill, openings, axis_x) -> list[dict]:
                     "kind": "remove_mirrored_architecture_free_pair",
                     "member_ids": sorted(removed),
                     "axis_length_m": round(line.length + other.length, 3),
-                    "scope": "No opening overlap or new free beam end; slab transfer and full FEA remain unchecked.",
+                    "panel_span_after_m": after["max_panel_span_proxy_m"],
+                    "panel_area_after_m2": after["max_panel_area_m2"],
+                    "scope": "No new free beam end or lost beam-connected wall tip; panel proxies stay within screening targets. Slab transfer and full FEA remain unchecked.",
                 }
             )
             break

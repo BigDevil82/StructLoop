@@ -1,6 +1,7 @@
 """Architectural candidates come from wall/opening evidence, not ROOM edges."""
 
 import pytest
+
 from struct_agent.schemas import LayoutCandidate, Member
 from struct_agent.services.architectural_layout import (
     apply_architecture_candidate,
@@ -92,9 +93,9 @@ def test_embedded_beam_and_architecture_free_mirror_pair_are_separate_candidates
                 end=(3.5, 2),
                 role="secondary",
             ),
-            Member(member_id="left_support", start=(0.5, 1), end=(0.5, 2), role="wall"),
+            Member(member_id="left_support", start=(0.5, 1), end=(0.5, 3), role="wall"),
             Member(
-                member_id="right_support", start=(3.5, 1), end=(3.5, 2), role="wall"
+                member_id="right_support", start=(3.5, 1), end=(3.5, 3), role="wall"
             ),
         ),
     )
@@ -112,6 +113,33 @@ def test_embedded_beam_and_architecture_free_mirror_pair_are_separate_candidates
     assert set(pair["member_ids"]) == {"left_partition", "right_partition"}
     removed = apply_architecture_candidate(layout, graph, pair["candidate_id"])
     assert {m.member_id for m in removed.members}.isdisjoint(pair["member_ids"])
+
+
+def test_architecture_free_pair_is_not_offered_when_it_braces_wall_tips(rooms):
+    graph = rooms.model_copy(
+        update={"infill_wall_polygons": (), "opening_polygons": ()}
+    )
+    layout = LayoutCandidate(
+        layout_id="braced_tips",
+        source="unit",
+        length_unit="m",
+        coordinate_system="global_xy",
+        slabs=(rooms.room_polygons[0],),
+        members=(
+            Member(member_id="left_wall", start=(0.5, 1), end=(0.5, 2), role="wall"),
+            Member(member_id="right_wall", start=(3.5, 1), end=(3.5, 2), role="wall"),
+            Member(
+                member_id="left_beam", start=(0.5, 2), end=(1.5, 2), role="secondary"
+            ),
+            Member(
+                member_id="right_beam", start=(2.5, 2), end=(3.5, 2), role="secondary"
+            ),
+        ),
+    )
+    assert not any(
+        row["kind"] == "remove_mirrored_architecture_free_pair"
+        for row in architecture_candidates(layout, graph)
+    )
 
 
 def test_wall_beam_joints_align_only_when_original_openings_match(rooms):
