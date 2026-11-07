@@ -167,9 +167,11 @@ def inspect_layout_relations(layout: LayoutCandidate, rooms: RoomGraph,
                               'align_opening_edges_preflight':preview,
                               'overlap_axis_m': line.intersection(unary_union([openings[i] for i in hits])).length})
             findings.append({'kind': 'wall_axis_intrudes_opening', 'source_member_ids': [m.member_id]})
+    from struct_agent.services.beam_layout import review_beam_grid
     return {'small_wall_groups': groups, 'short_wall_limbs': limbs, 'wall_piers':physical_walls,
             'free_wall_tips':free_tips, 'beam_spans': spans,
             'opening_conflicts': conflicts, 'openings_available': rooms.opening_polygons is not None, 'findings': findings,
+            'beam_grid': review_beam_grid(layout, rooms),
             'scope': 'Mechanical layout screening and architecture; detailing flags do not establish mechanical failure.'}
 
 

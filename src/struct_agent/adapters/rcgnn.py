@@ -251,8 +251,9 @@ def _normalize_generated_slabs(layout: LayoutCandidate) -> LayoutCandidate:
 
 
 def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: str,
-                           symmetry_axis_mm: float | None = None) -> LayoutCandidate:
-    """Retain upstream topology construction, including beam roles and slabs."""
+                           symmetry_axis_mm: float | None = None,
+                           beam_grid_mode: str = "legacy") -> LayoutCandidate:
+    """Build predicted walls; optional screening creates a trial beam grid."""
     from shapely.geometry import Polygon
     from struct_agent._vendor.data_engine.postprocess.fem_builder import FEMTopologyBuilder
     if ratios.shape != (len(graph.x), 16) or not np.isfinite(ratios).all() or np.any((ratios < 0)|(ratios > 1)):
@@ -277,10 +278,17 @@ def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: s
             raw["beams"].append(item)
     layout = layout_from_legacy(raw, unit="mm", layout_id=layout_id,
                                source="rcgnn" if symmetry_axis_mm is None else "rcgnn_symmetry_union")
-    return close_wall_junction_gaps(preprocess_short_members(_normalize_generated_slabs(layout)), graph)[0]
+    prepared = close_wall_junction_gaps(preprocess_short_members(_normalize_generated_slabs(layout)), graph)[0]
+    if beam_grid_mode == "legacy":
+        return prepared
+    if beam_grid_mode != "screened":
+        raise ValueError("beam_grid_mode must be legacy or screened")
+    from struct_agent.services.beam_layout import prune_redundant_beams
+    return prune_redundant_beams(prepared, graph)
 
 
-def trace_layout_generation(graph: RoomGraph, ratios: np.ndarray, layout: LayoutCandidate) -> dict[str, Any]:
+def trace_layout_generation(graph: RoomGraph, ratios: np.ndarray, layout: LayoutCandidate,
+                            *, beam_grid_mode: str = "legacy") -> dict[str, Any]:
     """Read-only replay of the fixed generator; intermediate global XY in m.
 
     No trained inference or FEA is rerun. The final replay must match the supplied
@@ -332,6 +340,12 @@ def trace_layout_generation(graph: RoomGraph, ratios: np.ndarray, layout: Layout
     replay=preprocess_short_members(before)
     stages['before_wall_junction_closure']=[m.model_dump(mode='json') for m in replay.members]
     replay,junction_closures=close_wall_junction_gaps(replay,graph)
+    stages['before_redundant_beam_pruning']=[m.model_dump(mode='json') for m in replay.members]
+    if beam_grid_mode == "screened":
+        from struct_agent.services.beam_layout import prune_redundant_beams
+        replay=prune_redundant_beams(replay,graph)
+    elif beam_grid_mode != "legacy":
+        raise ValueError("beam_grid_mode must be legacy or screened")
     if replay!=layout:
         raise ValueError('Generation replay differs from this layout; provenance is unavailable')
     stages['before_short_member_preprocessing']=[m.model_dump(mode='json') for m in before.members]
@@ -350,5 +364,6 @@ def trace_layout_generation(graph: RoomGraph, ratios: np.ndarray, layout: Layout
             'normalized_area_m2':sum(Polygon(p).area for p in before.slabs),
             'overlap_removed_m2':original_slab_area-sum(Polygon(p).area for p in before.slabs)},
         'preprocessing_chain_rule':'Endpoint-connected collinear beam chains are grouped without splitting at perpendicular wall supports; the 180mm test applies to the chain, not each FE beam segment.',
-        'settings':{'snap_tolerance_m':.002,'wall_gap_merge_m':.2,'min_wall_length_m':.1},
+        'settings':{'snap_tolerance_m':.002,'wall_gap_merge_m':.2,'min_wall_length_m':.1,
+                    'beam_grid_mode':beam_grid_mode},
         'scope':'Replayed generator and adapter preprocessing, not original construction intent or DXF semantic validation.'}

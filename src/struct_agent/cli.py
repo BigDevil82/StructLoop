@@ -31,6 +31,8 @@ def main() -> None:
     generate = sub.add_parser("generate")
     generate.add_argument("--dxf", type=Path, help="Explicit prepared DXF override, mm; requires --category")
     generate.add_argument("--category", type=int, choices=(0,1,2))
+    generate.add_argument("--beam-grid-mode", choices=("legacy", "screened"), default="legacy",
+                          help="screened omits geometrically redundant beams as a trial; it requires full re-analysis")
     generate.add_argument("--case-config", type=Path, default=Path("configs/test_case.json"),
                           help="Default engineering drawing and RC-GNN condition")
     optimization = sub.add_parser("optimize")
@@ -75,15 +77,18 @@ def main() -> None:
         if case is not None:
             inputs["case_config"] = args.case_config
         create_run(args.run,seed=args.seed,inputs=inputs,config={"command":"generate", "category":args.category,
-            "case_id": case.case_id if case is not None else None, "native_coordinate_unit": "mm", "symmetry_mode": "none"})
+            "case_id": case.case_id if case is not None else None, "native_coordinate_unit": "mm",
+            "symmetry_mode": "none", "beam_grid_mode": args.beam_grid_mode})
         rooms = graph_from_dxf(args.dxf,category=args.category)
         model = RCGNNAdapter(tuple(inputs[k] for k in sorted(inputs) if k.startswith("rc_fold_")))
         ratios = model.predict(rooms)
         np.save(args.run/"ratios.npy", ratios)
-        layout = layout_from_prediction(rooms, ratios, layout_id=args.run.name)
+        layout = layout_from_prediction(rooms, ratios, layout_id=args.run.name,
+                                        beam_grid_mode=args.beam_grid_mode)
         write_json(args.run/"room_graph.json",rooms.model_dump())
         write_json(args.run/"layout.json",layout.model_dump())
-        trace = trace_layout_generation(rooms, ratios, layout)
+        trace = trace_layout_generation(rooms, ratios, layout,
+                                        beam_grid_mode=args.beam_grid_mode)
         write_json(args.run/'junction_preprocessing.json', {
             'layout_sha256': trace['layout_sha256'], 'units': trace['units'],
             'original_openings_available': trace['original_openings_available'],
