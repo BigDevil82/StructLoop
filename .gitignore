@@ -12,6 +12,7 @@ dist/
 .coverage*
 htmlcov/
 _exp/
+.scratch/
 
 # Private engineering inputs, model weights and generated runs
 /checkpoints/
