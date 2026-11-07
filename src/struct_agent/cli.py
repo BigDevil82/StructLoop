@@ -31,8 +31,8 @@ def main() -> None:
     generate = sub.add_parser("generate")
     generate.add_argument("--dxf", type=Path, help="Explicit prepared DXF override, mm; requires --category")
     generate.add_argument("--category", type=int, choices=(0,1,2))
-    generate.add_argument("--beam-grid-mode", choices=("legacy", "screened"), default="legacy",
-                          help="screened omits geometrically redundant beams as a trial; it requires full re-analysis")
+    generate.add_argument("--beam-grid-mode", choices=("legacy", "screened", "architecture"), default="legacy",
+                          help="architecture screens locally mirrored architecture-free beam pairs; all trial layouts require full analysis")
     generate.add_argument("--case-config", type=Path, default=Path("configs/test_case.json"),
                           help="Default engineering drawing and RC-GNN condition")
     optimization = sub.add_parser("optimize")
@@ -89,6 +89,18 @@ def main() -> None:
         write_json(args.run/"layout.json",layout.model_dump())
         trace = trace_layout_generation(rooms, ratios, layout,
                                         beam_grid_mode=args.beam_grid_mode)
+        if args.beam_grid_mode == "architecture":
+            before = {m["member_id"]: m for m in trace["stages"]["before_redundant_beam_pruning"]}
+            after = {m["member_id"]: m for m in trace["stages"]["final_layout"]}
+            write_json(args.run/"beam_screening.json", {
+                "mode": "architecture",
+                "removed_beams": sorted(set(before) - set(after)),
+                "reclassified_as_wall": sorted(
+                    member_id for member_id in before.keys() & after.keys()
+                    if before[member_id]["role"] != "wall" and after[member_id]["role"] == "wall"
+                ),
+                "note": "Geometry and architectural-layer screen only; slab and structural analysis remain required.",
+            })
         write_json(args.run/'junction_preprocessing.json', {
             'layout_sha256': trace['layout_sha256'], 'units': trace['units'],
             'original_openings_available': trace['original_openings_available'],

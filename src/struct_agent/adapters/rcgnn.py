@@ -283,8 +283,14 @@ def layout_from_prediction(graph: RoomGraph, ratios: np.ndarray, *, layout_id: s
     prepared = close_wall_junction_gaps(preprocess_short_members(_normalize_generated_slabs(layout)), graph)[0]
     if beam_grid_mode == "legacy":
         return prepared
+    if beam_grid_mode == "architecture":
+        from struct_agent.services.architecture_beam_screen import (
+            screen_architectural_beam_grid,
+        )
+
+        return screen_architectural_beam_grid(prepared, graph)
     if beam_grid_mode != "screened":
-        raise ValueError("beam_grid_mode must be legacy or screened")
+        raise ValueError("beam_grid_mode must be legacy, screened or architecture")
     from struct_agent.services.beam_layout import prune_redundant_beams
     return prune_redundant_beams(prepared, graph)
 
@@ -343,11 +349,17 @@ def trace_layout_generation(graph: RoomGraph, ratios: np.ndarray, layout: Layout
     stages['before_wall_junction_closure']=[m.model_dump(mode='json') for m in replay.members]
     replay,junction_closures=close_wall_junction_gaps(replay,graph)
     stages['before_redundant_beam_pruning']=[m.model_dump(mode='json') for m in replay.members]
-    if beam_grid_mode == "screened":
+    if beam_grid_mode == "architecture":
+        from struct_agent.services.architecture_beam_screen import (
+            screen_architectural_beam_grid,
+        )
+
+        replay=screen_architectural_beam_grid(replay,graph)
+    elif beam_grid_mode == "screened":
         from struct_agent.services.beam_layout import prune_redundant_beams
         replay=prune_redundant_beams(replay,graph)
     elif beam_grid_mode != "legacy":
-        raise ValueError("beam_grid_mode must be legacy or screened")
+        raise ValueError("beam_grid_mode must be legacy, screened or architecture")
     if replay!=layout:
         raise ValueError('Generation replay differs from this layout; provenance is unavailable')
     stages['before_short_member_preprocessing']=[m.model_dump(mode='json') for m in before.members]
