@@ -112,3 +112,56 @@ def test_embedded_beam_and_architecture_free_mirror_pair_are_separate_candidates
     assert set(pair["member_ids"]) == {"left_partition", "right_partition"}
     removed = apply_architecture_candidate(layout, graph, pair["candidate_id"])
     assert {m.member_id for m in removed.members}.isdisjoint(pair["member_ids"])
+
+
+def test_wall_beam_joints_align_only_when_original_openings_match(rooms):
+    graph = rooms.model_copy(
+        update={
+            "infill_wall_polygons": (
+                _rectangle(0.9, 1.6, 1.1, 2.6),
+                _rectangle(2.9, 1.6, 3.1, 2.6),
+            ),
+            "opening_polygons": (
+                _rectangle(0.9, 1, 1.1, 1.6),
+                _rectangle(2.9, 1, 3.1, 1.6),
+            ),
+        }
+    )
+    layout = LayoutCandidate(
+        layout_id="two_joints",
+        source="unit",
+        length_unit="m",
+        coordinate_system="global_xy",
+        slabs=(rooms.room_polygons[0],),
+        members=(
+            Member(member_id="left_beam", start=(1, 1), end=(1, 1.9), role="secondary"),
+            Member(member_id="left_wall", start=(1, 1.9), end=(1, 2.5), role="wall"),
+            Member(
+                member_id="right_beam", start=(3, 1), end=(3, 1.8), role="secondary"
+            ),
+            Member(member_id="right_wall", start=(3, 1.8), end=(3, 2.5), role="wall"),
+        ),
+    )
+    aligned = next(
+        row
+        for row in architecture_candidates(layout, graph)
+        if row["kind"] == "align_mirrored_wall_beam_joints"
+    )
+    assert aligned["joint_mismatch_m"] == 0.1
+    changed = apply_architecture_candidate(layout, graph, aligned["candidate_id"])
+    assert all(
+        next(m for m in changed.members if m.member_id == member_id).end == (x, 1.6)
+        for member_id, x in (("left_beam", 1), ("right_beam", 3))
+    )
+    asymmetric = graph.model_copy(
+        update={
+            "opening_polygons": (
+                _rectangle(0.9, 1, 1.1, 1.6),
+                _rectangle(2.9, 1, 3.1, 1.4),
+            )
+        }
+    )
+    assert not any(
+        row["kind"] == "align_mirrored_wall_beam_joints"
+        for row in architecture_candidates(layout, asymmetric)
+    )

@@ -16,6 +16,11 @@ from shapely.ops import unary_union
 
 from struct_agent.schemas import LayoutCandidate, Member, RoomGraph
 
+from .architectural_joints import (
+    joint_alignment_candidates,
+    local_architecture_matches,
+)
+
 
 def _line(member: Member) -> LineString:
     return LineString((member.start, member.end))
@@ -96,6 +101,10 @@ def architecture_candidates(
             segment = LineString((start, end))
             if segment.length < 0.12 or segment.intersection(occupied).length > 0.002:
                 continue
+            if not local_architecture_matches(
+                segment, infill_eps, openings_eps, axis_x
+            ):
+                continue
             architectural = infill_eps if source.role == "wall" else openings_eps
             fraction = _coverage(segment, architectural)
             if fraction < (0.8 if source.role == "wall" else 0.7):
@@ -152,6 +161,10 @@ def architecture_candidates(
                         group.append(part)
                         remaining.remove(part)
                         changed = True
+            # A matching infill wall by itself is not a structural demand. Only
+            # a connected wall-and-opening-beam chain justifies a mirror repair.
+            if {part["role"] == "wall" for part in group} != {True, False}:
+                continue
             group, updates = _align_wall_opening_joint(group, layout, infill, axis_x)
             if not _safe_joint_alignment(
                 layout, group, updates, infill_eps, openings_eps
@@ -181,11 +194,15 @@ def architecture_candidates(
     proposals.extend(
         _classification_candidates(layout, infill_eps, openings_eps, axis_x)
     )
+    for row in joint_alignment_candidates(layout, infill, openings, axis_x):
+        row["candidate_id"] = _candidate_id(layout, [row["joint_updates"]])
+        proposals.append(row)
     proposals.extend(_redundant_pairs(layout, infill_eps, openings_eps, axis_x))
     priority = {
         "complete_mirrored_architecture_gap": 0,
-        "reclassify_infill_beam": 1,
-        "remove_mirrored_architecture_free_pair": 2,
+        "align_mirrored_wall_beam_joints": 1,
+        "reclassify_infill_beam": 2,
+        "remove_mirrored_architecture_free_pair": 3,
     }
     return sorted(
         proposals,
@@ -231,6 +248,8 @@ def _classification_candidates(layout, infill, openings, axis_x) -> list[dict]:
             continue
         line = _line(member)
         if _coverage(line, infill) < 0.9 or _coverage(line, openings) > 0.1:
+            continue
+        if not local_architecture_matches(line, infill, openings, axis_x):
             continue
         counterpart = _mirror(line, axis_x)
         mirrored_wall_fraction = _coverage(counterpart, walls_near)
@@ -468,6 +487,20 @@ def apply_architecture_candidate(
         )
         if members is None:
             raise ValueError("Architecture candidate collides with existing member IDs")
+    elif kind == "align_mirrored_wall_beam_joints":
+        updates = {row["member_id"]: row for row in proposal["joint_updates"]}
+        members = tuple(
+            member.model_copy(
+                update={
+                    updates[member.member_id]["endpoint"]: updates[member.member_id][
+                        "after_m"
+                    ]
+                }
+            )
+            if member.member_id in updates
+            else member
+            for member in layout.members
+        )
     elif kind == "reclassify_infill_beam":
         selected = set(proposal["member_ids"])
         members = tuple(
